@@ -52,7 +52,7 @@ If the optimizer fails to find such a candidate after a serious search, that is 
 
 ## Current result
 
-The current decision gate is in [`docs/results/2026-04-24-frontier-17.md`](./docs/results/2026-04-24-frontier-17.md).
+The current decision gate is in [`docs/results/2026-04-24-frontier-18.md`](./docs/results/2026-04-24-frontier-18.md).
 
 In short:
 
@@ -60,7 +60,9 @@ In short:
 - the first Config-A-beating model point drops from `192` trusted polyglot elements to `143`
 - the first baseline-collision model crossing drops from `224` to `200`
 - `frontier-17` adds a stack-feasibility gate and returns **NO-GO** for further economics tuning
-- the current asymmetric result is still a budget frontier, not yet an executable script construction
+- `frontier-18` adds a conservative stack-correct polyglot round skeleton
+- the old `143` trusted-element result does not survive; the first stack-correct Config-A crossing moves to `293`
+- no stack-correct point beats the public baseline collision level under the current `300` trusted-element cap
 
 That shifts the repo:
 
@@ -70,7 +72,7 @@ from
 
 to
 
-"build or import a stack-correct, regtest-proven QSB/polyglot round first."
+"either find a lower-op stack-correct polyglot selection gadget, or pivot away from this branch."
 
 ## Is this post-quantum safe?
 
@@ -111,11 +113,15 @@ checkcheck/
       2026-04-24-frontier-14.md
       2026-04-24-frontier-15.md
       2026-04-24-frontier-16.md
+      2026-04-24-frontier-17.md
+      2026-04-24-frontier-18.md
   specs/
     compiler.md
   third_party/
     README.md
   tools/
+    stack_correct_polyglot_frontier.py
+    qsb_stack_sanity.py
     polyglot_setup_frontier.py
     polyglot_frontier.py
     der_triple_anchor_frontier.py
