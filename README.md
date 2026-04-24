@@ -52,15 +52,15 @@ If the optimizer fails to find such a candidate after a serious search, that is 
 
 ## Current result
 
-The current strongest result is in [`docs/results/2026-04-24-frontier-7.md`](./docs/results/2026-04-24-frontier-7.md).
+The current strongest result is in [`docs/results/2026-04-24-frontier-8.md`](./docs/results/2026-04-24-frontier-8.md).
 
 In short:
 
-- exact `13` is the first DER length where I can explicitly construct real pushed-token overlaps inside valid signatures
-- but those overlap-bearing exact-`13` families still stay exactly at the plain subset baseline under both ordered `2`-of-`4` and ordered `3`-of-`5`
-- random exact-length probes stayed flat from `13` through `18`
+- toy overlap works because deletion creates fresh later-match occurrences
+- explicit overlap-bearing exact-`13` DER families do contain real pushed-token overlaps, but they show no fresh-occurrence cascades
+- random exact DER families also showed no cascade witnesses in the searched regimes
 
-That shifts the repo from "maybe we just need the first overlap-bearing DER surface" toward "mere overlap availability is not enough, so DER-overlap geometry is likely the wrong frontier to optimize."
+That shifts the repo from "find overlap-bearing DER" toward "find a valid blob family that can actually create fresh deletable occurrences, or leave DER behind."
 
 ## Is this post-quantum safe?
 
@@ -92,11 +92,13 @@ checkcheck/
       2026-04-24-frontier-5.md
       2026-04-24-frontier-6.md
       2026-04-24-frontier-7.md
+      2026-04-24-frontier-8.md
   specs/
     compiler.md
   third_party/
     README.md
   tools/
+    fad_cascade_frontier.py
     der_higher_order_frontier.py
     der_overlap_threshold_frontier.py
     der_surface_frontier.py
