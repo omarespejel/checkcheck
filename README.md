@@ -52,16 +52,16 @@ If the optimizer fails to find such a candidate after a serious search, that is 
 
 ## Current result
 
-The current strongest result is in [`docs/results/2026-04-24-frontier-4.md`](./docs/results/2026-04-24-frontier-4.md).
+The current strongest result is in [`docs/results/2026-04-24-frontier-5.md`](./docs/results/2026-04-24-frontier-5.md).
 
 In short:
 
-- fixed length alone does not kill overlap-coded `FindAndDelete`
-- engineered arbitrary 9-byte payload families can still beat the plain subset baseline
-- but the actual valid minimal-DER 9-byte surface used by QSB is cross-bifix-free
-- that means the current QSB dummy-signature surface is not merely unexploited; it is structurally unable to realize overlap-coded gains
+- exact `10`-byte DER is still structurally dead for overlap
+- exact `11`- and `12`-byte DER are not obviously blocked by byte budget, but `10,000` random 4-token family probes still showed no overlap gain
+- motif-heavy exhaustive pools on the first obvious `11`- and `12`-byte prefix embeddings also stayed flat
+- that pushes the repo away from short non-minimal DER and toward either higher-order overlap search or a different valid selectable blob family
 
-That shifts the repo from "search harder inside minimal 9-byte DER" toward "search for other valid selectable blob surfaces, or move to longer / non-minimal constructions and re-price the byte budget."
+That shifts the repo from "slightly longer DER might save us" toward "short DER-shaped blobs still look too rigid, even when byte repricing says they should have had room to matter."
 
 ## Is this post-quantum safe?
 
@@ -90,11 +90,13 @@ checkcheck/
       2026-04-24-frontier-2.md
       2026-04-24-frontier-3.md
       2026-04-24-frontier-4.md
+      2026-04-24-frontier-5.md
   specs/
     compiler.md
   third_party/
     README.md
   tools/
+    der_surface_frontier.py
     fad_overlap_search.py
     frontier_model.py
 ```
