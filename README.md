@@ -52,15 +52,15 @@ If the optimizer fails to find such a candidate after a serious search, that is 
 
 ## Current result
 
-The current strongest result is in [`docs/results/2026-04-24-frontier-6.md`](./docs/results/2026-04-24-frontier-6.md).
+The current strongest result is in [`docs/results/2026-04-24-frontier-7.md`](./docs/results/2026-04-24-frontier-7.md).
 
 In short:
 
-- exact `11`- and `12`-byte DER stayed flat even after raising from ordered `2`-of-`4` to ordered `3`-of-`5` and `3`-of-`6`
-- motif-heavy exhaustive pools for exact `11`- and `12`-byte DER stayed exactly at the plain subset baseline under the same higher-order probe
-- together with `frontier-5`, this makes short DER-shaped selectable blobs look exhausted through exact length `12`
+- exact `13` is the first DER length where I can explicitly construct real pushed-token overlaps inside valid signatures
+- but those overlap-bearing exact-`13` families still stay exactly at the plain subset baseline under both ordered `2`-of-`4` and ordered `3`-of-`5`
+- random exact-length probes stayed flat from `13` through `18`
 
-That shifts the repo away from "maybe short non-minimal DER only needs more interactions" toward "move to materially longer blobs or abandon DER-shaped selectable blobs as the main overlap surface."
+That shifts the repo from "maybe we just need the first overlap-bearing DER surface" toward "mere overlap availability is not enough, so DER-overlap geometry is likely the wrong frontier to optimize."
 
 ## Is this post-quantum safe?
 
@@ -91,12 +91,14 @@ checkcheck/
       2026-04-24-frontier-4.md
       2026-04-24-frontier-5.md
       2026-04-24-frontier-6.md
+      2026-04-24-frontier-7.md
   specs/
     compiler.md
   third_party/
     README.md
   tools/
     der_higher_order_frontier.py
+    der_overlap_threshold_frontier.py
     der_surface_frontier.py
     fad_overlap_search.py
     frontier_model.py
