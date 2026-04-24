@@ -4,12 +4,17 @@ Build a stack-correct polyglot round skeleton and rerun the frontier.
 
 This is the implementation gate after frontier-17. The previous asymmetric
 polyglot frontier was a budget model. Here we emit concrete Bitcoin Script
-bytes for a conservative stack-correct split-pool round and simulate the stack
-movements that matter:
+bytes for stack-correct split-pool rounds and simulate the stack movements
+that matter.
+
+Two signed-selection gadgets are implemented:
 
 - signed selections pick a trusted polyglot element with OP_PICK for the
   HASH160 equality check, then OP_ROLL the same hardcoded element into the
-  CHECKMULTISIG signature zone;
+  CHECKMULTISIG signature zone. This is conservative but too expensive;
+- signed selections consume the index to OP_ROLL the trusted polyglot element
+  once, then OP_DUP it before HASH160 equality checking. This avoids OP_PICK
+  and the second pool OP_ROLL, and is the rescue gadget tested in frontier-19;
 - bonus selections OP_ROLL from a separate dummy-signature pool;
 - the puzzle/CHECKMULTISIG tail uses OP_SWAP, not the broken OP_2 OP_ROLL
   movement found in frontier-17.
@@ -20,6 +25,7 @@ round-script execution layer: stack movement, script bytes, and opcode counts.
 
 from __future__ import annotations
 
+import argparse
 from dataclasses import dataclass
 from math import lgamma, log
 from pathlib import Path
@@ -132,6 +138,7 @@ class RoundShape:
 @dataclass(frozen=True)
 class RoundBuild:
     shape: RoundShape
+    signed_gadget: str
     script_bytes: int
     ops: int
     witness_bytes: int
@@ -260,6 +267,14 @@ def roll_by_index_from_pool(machine: ScriptMachine, first_remaining_name: str) -
     machine.op(OP_ROLL)
 
 
+def duplicate_selected_poly_by_index(machine: ScriptMachine, first_remaining_name: str) -> None:
+    # Stack top is the sanitized index. This consumes the index to roll the
+    # selected polyglot element once, then duplicates it. One copy is consumed
+    # by HASH160/EQUALVERIFY and one remains as the CHECKMULTISIG signature.
+    roll_by_index_from_pool(machine, first_remaining_name)
+    machine.op(OP_DUP)
+
+
 def round_witness_stack(
     shape: RoundShape,
     signed_indices: tuple[int, ...],
@@ -297,7 +312,10 @@ def build_round(
     shape: RoundShape,
     signed_indices: tuple[int, ...] | None = None,
     bonus_indices: tuple[int, ...] | None = None,
+    signed_gadget: str = "roll_dup",
 ) -> RoundBuild:
+    if signed_gadget not in {"copy_roll", "roll_dup"}:
+        raise ValueError(f"unknown signed gadget: {signed_gadget}")
     signed_indices = signed_indices if signed_indices is not None else default_indices(shape.signed)
     bonus_indices = bonus_indices if bonus_indices is not None else default_indices(shape.bonus)
     if len(signed_indices) != shape.signed or len(bonus_indices) != shape.bonus:
@@ -332,15 +350,23 @@ def build_round(
         machine.push_int(len(poly_remaining) - 1)
         machine.op(OP_MIN)
 
-        pick_by_index_from_pool(machine, poly_remaining[0])
+        if signed_gadget == "copy_roll":
+            pick_by_index_from_pool(machine, poly_remaining[0])
+        else:
+            duplicate_selected_poly_by_index(machine, poly_remaining[0])
         roll_named(machine, f"pre{selection_index}")
         machine.op(OP_HASH160)
         machine.op(OP_EQUALVERIFY)
 
-        roll_by_index_from_pool(machine, poly_remaining[0])
-        actual = machine.stack[-1]
-        if actual.name != selected:
-            raise AssertionError(f"selected poly mismatch: expected {selected}, got {actual}")
+        if signed_gadget == "copy_roll":
+            roll_by_index_from_pool(machine, poly_remaining[0])
+            actual = machine.stack[-1]
+            if actual.name != selected:
+                raise AssertionError(f"selected poly mismatch: expected {selected}, got {actual}")
+        else:
+            actual = machine.stack[-1]
+            if actual.name != selected:
+                raise AssertionError(f"selected poly mismatch: expected {selected}, got {actual}")
         select_from_remaining(poly_remaining, witness_index)
 
     bonus_remaining = [f"B{i}" for i in range(shape.bonus_pool)]
@@ -379,6 +405,7 @@ def build_round(
 
     return RoundBuild(
         shape=shape,
+        signed_gadget=signed_gadget,
         script_bytes=len(machine.script),
         ops=machine.ops,
         witness_bytes=witness_round_bytes(max(shape.poly, shape.bonus_pool) - 1, shape.signed, shape.bonus),
@@ -457,7 +484,10 @@ class StackCorrectPoint:
         )
 
 
-def round_candidates(max_poly: int = MAX_POLY_PER_ROUND) -> list[RoundCandidate]:
+def round_candidates(
+    max_poly: int = MAX_POLY_PER_ROUND,
+    signed_gadget: str = "roll_dup",
+) -> list[RoundCandidate]:
     candidates: list[RoundCandidate] = []
     for poly in range(1, max_poly + 1):
         for signed in range(1, min(MAX_SIGNED_PER_ROUND, poly) + 1):
@@ -467,8 +497,14 @@ def round_candidates(max_poly: int = MAX_POLY_PER_ROUND) -> list[RoundCandidate]
                 if bonus_pool is None:
                     continue
                 try:
-                    round70 = build_round(RoundShape(poly, bonus_pool, signed, bonus, 70))
-                    round71 = build_round(RoundShape(poly, bonus_pool, signed, bonus, 71))
+                    round70 = build_round(
+                        RoundShape(poly, bonus_pool, signed, bonus, 70),
+                        signed_gadget=signed_gadget,
+                    )
+                    round71 = build_round(
+                        RoundShape(poly, bonus_pool, signed, bonus, 71),
+                        signed_gadget=signed_gadget,
+                    )
                 except (AssertionError, ValueError):
                     continue
                 candidates.append(
@@ -521,8 +557,14 @@ def dominates(left: RoundCandidate, right: RoundCandidate) -> bool:
     )
 
 
-def best_points_by_setup_total(max_setup_total: int = SEARCH_CAPS[-1]) -> dict[int, StackCorrectPoint]:
-    candidates = round_candidates(max_poly=min(MAX_POLY_PER_ROUND, max_setup_total - 1))
+def best_points_by_setup_total(
+    max_setup_total: int = SEARCH_CAPS[-1],
+    signed_gadget: str = "roll_dup",
+) -> dict[int, StackCorrectPoint]:
+    candidates = round_candidates(
+        max_poly=min(MAX_POLY_PER_ROUND, max_setup_total - 1),
+        signed_gadget=signed_gadget,
+    )
     best: dict[int, StackCorrectPoint] = {}
     for round1 in candidates:
         for round2 in candidates:
@@ -556,11 +598,13 @@ def fmt_time(hashes: float) -> str:
 
 def render_stack_correct_builder_demo() -> str:
     shape = RoundShape(poly=64, bonus_pool=206, signed=8, bonus=2, sig_len=70)
-    round_build = build_round(shape)
+    conservative = build_round(shape, signed_gadget="copy_roll")
+    round_build = build_round(shape, signed_gadget="roll_dup")
     alternate = build_round(
         shape,
         signed_indices=last_remaining_indices(shape.poly, shape.signed),
         bonus_indices=last_remaining_indices(shape.bonus_pool, shape.bonus),
+        signed_gadget="roll_dup",
     )
     alternate_status = (
         "pass"
@@ -571,6 +615,8 @@ def render_stack_correct_builder_demo() -> str:
         "# stack-correct-builder-demo",
         "",
         f"shape: m={shape.poly} q={shape.bonus_pool} s={shape.signed} b={shape.bonus}",
+        f"conservative_round_script_bytes={conservative.script_bytes}",
+        f"conservative_round_ops={conservative.ops}",
         f"round_script_bytes={round_build.script_bytes}",
         f"round_ops={round_build.ops}",
         f"round_witness_bytes={round_build.witness_bytes}",
@@ -583,11 +629,11 @@ def render_stack_correct_builder_demo() -> str:
     return "\n".join(lines)
 
 
-def render_frontier() -> str:
+def render_frontier(signed_gadget: str = "roll_dup") -> str:
     refs = {ref.name: ref for ref in corrected_references()}
     config_a = refs["configA_8p1b_7p2b"]
     baseline = refs["baseline_8_8"]
-    best_by_total = best_points_by_setup_total()
+    best_by_total = best_points_by_setup_total(signed_gadget=signed_gadget)
 
     first_config_a = next(
         (
@@ -607,7 +653,7 @@ def render_frontier() -> str:
         None,
     )
 
-    lines = ["# stack-correct-polyglot-frontier", ""]
+    lines = ["# stack-correct-polyglot-frontier", "", f"signed_gadget={signed_gadget}", ""]
     if first_config_a is None:
         lines.extend(["first_point_beating_configA: none", ""])
     else:
@@ -677,9 +723,17 @@ def render_point(name: str, setup_total: int, point: StackCorrectPoint) -> list[
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--signed-gadget",
+        choices=("roll_dup", "copy_roll"),
+        default="roll_dup",
+        help="signed-selection gadget to use for the frontier search",
+    )
+    args = parser.parse_args()
     print(render_stack_correct_builder_demo())
     print()
-    print(render_frontier())
+    print(render_frontier(signed_gadget=args.signed_gadget))
 
 
 if __name__ == "__main__":

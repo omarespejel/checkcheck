@@ -52,7 +52,7 @@ If the optimizer fails to find such a candidate after a serious search, that is 
 
 ## Current result
 
-The current decision gate is in [`docs/results/2026-04-24-frontier-18.md`](./docs/results/2026-04-24-frontier-18.md).
+The current decision gate is in [`docs/results/2026-04-24-frontier-19.md`](./docs/results/2026-04-24-frontier-19.md).
 
 In short:
 
@@ -60,9 +60,10 @@ In short:
 - the first Config-A-beating model point drops from `192` trusted polyglot elements to `143`
 - the first baseline-collision model crossing drops from `224` to `200`
 - `frontier-17` adds a stack-feasibility gate and returns **NO-GO** for further economics tuning
-- `frontier-18` adds a conservative stack-correct polyglot round skeleton
-- the old `143` trusted-element result does not survive; the first stack-correct Config-A crossing moves to `293`
-- no stack-correct point beats the public baseline collision level under the current `300` trusted-element cap
+- `frontier-18` adds a conservative stack-correct polyglot round skeleton and shows that version is too expensive
+- `frontier-19` finds a cheaper `OP_ROLL + OP_DUP` selection gadget that avoids `OP_PICK + OP_ROLL`
+- the old `143` trusted-element result survives under emitted stack-correct accounting
+- the first stack-correct baseline-collision crossing appears at `198` trusted elements, with the stronger practical point at `224`
 
 That shifts the repo:
 
@@ -72,7 +73,7 @@ from
 
 to
 
-"either find a lower-op stack-correct polyglot selection gadget, or pivot away from this branch."
+"turn the stack-correct polyglot round into a transaction-level script builder and regtest/interpreter validation."
 
 ## Is this post-quantum safe?
 
@@ -115,6 +116,7 @@ checkcheck/
       2026-04-24-frontier-16.md
       2026-04-24-frontier-17.md
       2026-04-24-frontier-18.md
+      2026-04-24-frontier-19.md
   specs/
     compiler.md
   third_party/
