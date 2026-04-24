@@ -50,16 +50,22 @@ The MVP is successful if it finds a consensus-compatible candidate that improves
 
 If the optimizer fails to find such a candidate after a serious search, that is still a useful result. It would suggest the current QSB design is already near the efficient frontier under today’s Bitcoin constraints.
 
-## First result
+## First interesting result
 
-The first useful result from this repo is already directional:
+The first calibrated result is stronger than the initial sketch:
 
-- Directly porting modern hash-based signature systems such as SLH-DSA / SPHINCS-style FORS trees into Bitcoin Script is unlikely to beat the current HORS-like QSB baseline.
-- The likely bottleneck is not the hash primitive itself. Bitcoin Script does not expose SHAKE, KangarooTwelve, or BLAKE3.
-- The likely bottleneck is verification geometry: bytes per revealed opening, non-push opcodes per checked opening, and whether the construction can be tuned tightly to the `~2^46` hash-to-signature puzzle target.
-- That makes grouped-choice / limited-use codebook constructions more promising than naive Merkle-authentication-path designs.
+- The imported upstream QSB baseline already uses `9953-9967` bytes out of the `10,000` byte script budget.
+- `9300` of those bytes are just hardcoded commitments and dummy signatures.
+- An optimistic grouped-choice family cannot catch up under the same script and op limits.
+- The best grouped-choice point found by the current model reaches only `67.74` raw digest bits at `9983` bytes and `197` ops, still far below the public QSB points at `80.35` and `84.51` signed digest bits.
 
-Details are in [`docs/results/2026-04-24-frontier-0.md`](./docs/results/2026-04-24-frontier-0.md).
+That shifts the thesis:
+
+- plain grouped-choice is not the next frontier
+- naive tree-based designs are still blocked by Script expressivity
+- HORS-like subset encoding looks closer to the no-softfork frontier than the initial intuition suggested
+
+Details are in [`docs/results/2026-04-24-frontier-1.md`](./docs/results/2026-04-24-frontier-1.md).
 
 ## Is this post-quantum safe?
 
@@ -84,6 +90,7 @@ checkcheck/
     mvp.md
     results/
       2026-04-24-frontier-0.md
+      2026-04-24-frontier-1.md
   specs/
     compiler.md
   third_party/
