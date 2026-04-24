@@ -50,22 +50,19 @@ The MVP is successful if it finds a consensus-compatible candidate that improves
 
 If the optimizer fails to find such a candidate after a serious search, that is still a useful result. It would suggest the current QSB design is already near the efficient frontier under today’s Bitcoin constraints.
 
-## First interesting result
+## Current result
 
-The first calibrated result is stronger than the initial sketch:
+The current strongest result is in [`docs/results/2026-04-24-frontier-2.md`](./docs/results/2026-04-24-frontier-2.md).
 
-- The imported upstream QSB baseline already uses `9953-9967` bytes out of the `10,000` byte script budget.
-- `9300` of those bytes are just hardcoded commitments and dummy signatures.
-- An optimistic grouped-choice family cannot catch up under the same script and op limits.
-- The best grouped-choice point found by the current model reaches only `67.74` raw digest bits at `9983` bytes and `197` ops, still far below the public QSB points at `80.35` and `84.51` signed digest bits.
+In short:
 
-That shifts the thesis:
+- the public QSB baseline `150,8,8` is already the exact signed-digest optimum inside the current HORS-like family
+- the public Config A point is already the exact best search-space tradeoff once you require about `80` signed bits
+- grouped-choice is structurally dominated
+- ordered witness permutations collapse to the same searched scriptCode, so they do not buy real entropy
+- tree-style modern constructions remain blocked by current Bitcoin Script expressivity
 
-- plain grouped-choice is not the next frontier
-- naive tree-based designs are still blocked by Script expressivity
-- HORS-like subset encoding looks closer to the no-softfork frontier than the initial intuition suggested
-
-Details are in [`docs/results/2026-04-24-frontier-1.md`](./docs/results/2026-04-24-frontier-1.md).
+That means the next frontier is no longer "tune the obvious families harder." It has to come from a genuinely different verification surface or a way to compress many logical choices into one checked opening.
 
 ## Is this post-quantum safe?
 
@@ -91,6 +88,7 @@ checkcheck/
     results/
       2026-04-24-frontier-0.md
       2026-04-24-frontier-1.md
+      2026-04-24-frontier-2.md
   specs/
     compiler.md
   third_party/

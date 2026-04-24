@@ -15,6 +15,7 @@ This tool now does three things:
 from __future__ import annotations
 
 from dataclasses import dataclass
+from itertools import permutations
 from math import ceil, lgamma, log, log2
 from pathlib import Path
 from typing import Iterable
@@ -23,6 +24,7 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 UPSTREAM_PIPELINE = ROOT / "third_party" / "qsb-avihu" / "pipeline"
+_QSB_PRIMITIVES: tuple[object, object, object] | None = None
 
 
 def log2_binom(n: int, k: int) -> float:
@@ -132,11 +134,15 @@ class GroupedChoiceFrontierPoint:
 
 
 def load_qsb_builder():
+    global _QSB_PRIMITIVES
+    if _QSB_PRIMITIVES is not None:
+        return _QSB_PRIMITIVES
     if not UPSTREAM_PIPELINE.exists():
         raise FileNotFoundError(f"missing upstream pipeline at {UPSTREAM_PIPELINE}")
     sys.path.insert(0, str(UPSTREAM_PIPELINE))
-    from bitcoin_tx import QSBScriptBuilder  # type: ignore
-    return QSBScriptBuilder
+    from bitcoin_tx import QSBScriptBuilder, push_data, push_number  # type: ignore
+    _QSB_PRIMITIVES = (QSBScriptBuilder, push_data, push_number)
+    return _QSB_PRIMITIVES
 
 
 def qsb_total_ops(cfg: QSBConfig) -> int:
@@ -163,7 +169,7 @@ def qsb_subset_search_bits(cfg: QSBConfig) -> float:
 
 
 def calibrate_qsb_configs() -> list[QSBMetrics]:
-    builder_cls = load_qsb_builder()
+    builder_cls, _, _ = load_qsb_builder()
     configs = [
         QSBConfig("baseline_8_8", n=150, t1_signed=8, t1_bonus=0, t2_signed=8, t2_bonus=0),
         QSBConfig("configA_8p1b_7p2b", n=150, t1_signed=8, t1_bonus=1, t2_signed=7, t2_bonus=2),
@@ -203,6 +209,92 @@ def calibrate_qsb_configs() -> list[QSBMetrics]:
     return results
 
 
+def qsb_round_bytes_exact(
+    n: int,
+    t_signed: int,
+    t_bonus: int,
+    sig_len: int,
+) -> int:
+    _, push_data, push_number = load_qsb_builder()
+    t_total = t_signed + t_bonus
+    total = 0
+    total += n * len(push_data(b"\x00" * 20))
+    total += n * len(push_data(b"\x00" * 9))
+    total += 1  # OP_0
+    total += len(push_data(b"\x11" * sig_len))
+
+    for i in range(t_signed):
+        idx_pos = 2 * n + 1 - i
+        sanitize = n - i
+        preimage_pos = 2 * n + 1 + t_total - 2 * i
+        total += len(push_number(idx_pos))
+        total += 1  # OP_ROLL
+        total += len(push_number(sanitize))
+        total += 1  # OP_MIN
+        total += 1  # OP_DUP
+        total += len(push_number(n + 1))
+        total += 1  # OP_ADD
+        total += 1  # OP_ROLL
+        total += len(push_number(preimage_pos))
+        total += 1  # OP_ROLL
+        total += 1  # OP_HASH160
+        total += 1  # OP_EQUALVERIFY
+        total += 1  # OP_ROLL
+
+    for i in range(t_bonus):
+        j = t_signed + i
+        idx_pos = 2 * n + 1 - j
+        sanitize = n - j
+        total += len(push_number(idx_pos))
+        total += 1  # OP_ROLL
+        total += len(push_number(sanitize))
+        total += 1  # OP_MIN
+        total += 1  # OP_ROLL
+
+    puzzle_pos = 2 * n + 2
+    puzzle_key_pos = puzzle_pos
+    total += len(push_number(puzzle_pos))
+    total += 1  # OP_ROLL
+    total += 1  # OP_DUP
+    total += 1  # OP_RIPEMD160
+    total += len(push_number(puzzle_key_pos))
+    total += 1  # OP_ROLL
+    total += 1  # OP_CHECKSIGVERIFY
+
+    m = t_total + 1
+    total += len(push_number(m))
+    total += 1  # OP_2
+    total += 1  # OP_ROLL
+    cms_roll_pos = 2 * n + 3
+    for _ in range(t_total):
+        total += len(push_number(cms_roll_pos))
+        total += 1  # OP_ROLL
+    total += len(push_number(m))
+    total += 1  # OP_CHECKMULTISIG
+    return total
+
+
+def qsb_full_script_bytes_exact(cfg: QSBConfig) -> int:
+    _, push_data, _ = load_qsb_builder()
+    pinning = len(push_data(sig_of_len(70, 0x11))) + 5
+    return (
+        pinning
+        + qsb_round_bytes_exact(cfg.n, cfg.t1_signed, cfg.t1_bonus, 70)
+        + qsb_round_bytes_exact(cfg.n, cfg.t2_signed, cfg.t2_bonus, 71)
+    )
+
+
+def validate_exact_byte_model() -> list[str]:
+    lines: list[str] = []
+    for measured in calibrate_qsb_configs():
+        exact = qsb_full_script_bytes_exact(measured.config)
+        status = "ok" if exact == measured.full_script_bytes else "mismatch"
+        lines.append(
+            f"{measured.config.name}: measured={measured.full_script_bytes} exact={exact} status={status}"
+        )
+    return lines
+
+
 def grouped_choice_comparison(total_options: int, reveals: int, target_bits: float) -> GroupedChoiceComparison:
     return GroupedChoiceComparison(
         reveals=reveals,
@@ -225,6 +317,101 @@ def optimistic_tree_control(reveals: int, target_bits: float) -> OptimisticTreeC
         optimistic_witness_path_bytes=reveals * depth * 20,
         optimistic_hash_steps=reveals * depth,
     )
+
+
+@dataclass(frozen=True)
+class HorsSweepPoint:
+    config: QSBConfig
+    full_script_bytes: int
+    total_ops: int
+    signed_digest_bits: float
+    subset_search_bits: float
+
+
+def iter_feasible_round_configs(max_round_cost: int = 188) -> list[tuple[int, int, int]]:
+    round_configs: list[tuple[int, int, int]] = []
+    for signed in range(0, 18):
+        bonus = 0
+        while True:
+            cost = 11 * signed + 5 * bonus + 8
+            if cost > max_round_cost:
+                break
+            round_configs.append((signed, bonus, cost))
+            bonus += 1
+    return round_configs
+
+
+def iter_hors_family_points(max_n: int = 170, max_script_bytes: int = 10_000, max_ops: int = 201):
+    round_configs = iter_feasible_round_configs()
+    for n in range(1, max_n + 1):
+        round_metrics: list[tuple[int, int, int, float, float, int, int]] = []
+        for signed, bonus, cost in round_configs:
+            if signed + bonus == 0:
+                continue
+            if signed > n or signed + bonus > n:
+                continue
+            round_metrics.append(
+                (
+                    signed,
+                    bonus,
+                    cost,
+                    log2_binom(n, signed),
+                    log2_binom(n, signed + bonus),
+                    qsb_round_bytes_exact(n, signed, bonus, 70),
+                    qsb_round_bytes_exact(n, signed, bonus, 71),
+                )
+            )
+        for s1, b1, cost1, signed1_bits, subset1_bits, round1_bytes, _ in round_metrics:
+            for s2, b2, cost2, signed2_bits, subset2_bits, _, round2_bytes in round_metrics:
+                total_ops = 5 + cost1 + cost2
+                if total_ops > max_ops:
+                    continue
+                cfg = QSBConfig(
+                    name=f"n={n}|r1={s1}+{b1}b|r2={s2}+{b2}b",
+                    n=n,
+                    t1_signed=s1,
+                    t1_bonus=b1,
+                    t2_signed=s2,
+                    t2_bonus=b2,
+                )
+                full_bytes = 76 + round1_bytes + round2_bytes
+                if full_bytes > max_script_bytes:
+                    continue
+                yield HorsSweepPoint(
+                    config=cfg,
+                    full_script_bytes=full_bytes,
+                    total_ops=total_ops,
+                    signed_digest_bits=signed1_bits + signed2_bits,
+                    subset_search_bits=subset1_bits + subset2_bits,
+                )
+
+
+def update_top_points(
+    current: list[HorsSweepPoint],
+    point: HorsSweepPoint,
+    *,
+    sort_key,
+    limit: int = 10,
+) -> list[HorsSweepPoint]:
+    current.append(point)
+    current.sort(key=sort_key)
+    del current[limit:]
+    return current
+
+
+def probe_order_invariance(n: int, t: int) -> tuple[int, int, int]:
+    builder_cls, _, _ = load_qsb_builder()
+    builder = builder_cls(n=n, t1_signed=t, t1_bonus=0, t2_signed=t, t2_bonus=0)
+    builder.generate_keys()
+    sig = sig_of_len(70, 0x22)
+    codes: dict[bytes, int] = {}
+    for ordered in permutations(range(n), t):
+        selected = [builder.dummy_sigs[0][idx] for idx in ordered]
+        code = builder.get_round_script_code(0, sig, selected)
+        codes[code] = codes.get(code, 0) + 1
+    multiplicities = set(codes.values())
+    multiplicity = multiplicities.pop() if len(multiplicities) == 1 else -1
+    return len(list(permutations(range(n), t))), len(codes), multiplicity
 
 
 def optimistic_grouped_choice_bytes(
@@ -356,11 +543,127 @@ def render_structural_comparisons() -> str:
     return "\n".join(lines)
 
 
+def render_hors_sweep() -> str:
+    feasible_points = 0
+    best_signed: HorsSweepPoint | None = None
+    best_subset: HorsSweepPoint | None = None
+    top_signed: list[HorsSweepPoint] = []
+    threshold_bests: dict[int, HorsSweepPoint | None] = {80: None, 75: None, 70: None, 60: None}
+    for point in iter_hors_family_points():
+        feasible_points += 1
+        if best_signed is None or (
+            point.signed_digest_bits,
+            -point.full_script_bytes,
+            -point.subset_search_bits,
+        ) > (
+            best_signed.signed_digest_bits,
+            -best_signed.full_script_bytes,
+            -best_signed.subset_search_bits,
+        ):
+            best_signed = point
+        if best_subset is None or (
+            point.subset_search_bits,
+            point.signed_digest_bits,
+            -point.full_script_bytes,
+        ) > (
+            best_subset.subset_search_bits,
+            best_subset.signed_digest_bits,
+            -best_subset.full_script_bytes,
+        ):
+            best_subset = point
+        update_top_points(
+            top_signed,
+            point,
+            sort_key=lambda p: (
+                -p.signed_digest_bits,
+                p.full_script_bytes,
+                p.total_ops,
+                -p.subset_search_bits,
+            ),
+        )
+        for threshold in threshold_bests:
+            if point.signed_digest_bits < threshold:
+                continue
+            current = threshold_bests[threshold]
+            if current is None or (
+                point.subset_search_bits,
+                point.signed_digest_bits,
+                -point.full_script_bytes,
+            ) > (
+                current.subset_search_bits,
+                current.signed_digest_bits,
+                -current.full_script_bytes,
+            ):
+                threshold_bests[threshold] = point
+    if best_signed is None or best_subset is None:
+        raise RuntimeError("no feasible HORS-family points found")
+    top_signed = sorted(
+        top_signed,
+        key=lambda p: (-p.signed_digest_bits, p.full_script_bytes, p.total_ops, -p.subset_search_bits),
+    )
+    exact_validation = validate_exact_byte_model()
+    probe_6_3 = probe_order_invariance(6, 3)
+    probe_7_3 = probe_order_invariance(7, 3)
+
+    def fmt(point: HorsSweepPoint) -> str:
+        cfg = point.config
+        return (
+            f"n={cfg.n} r1={cfg.t1_signed}+{cfg.t1_bonus}b r2={cfg.t2_signed}+{cfg.t2_bonus}b "
+            f"bytes={point.full_script_bytes} ops={point.total_ops} "
+            f"signed_bits={point.signed_digest_bits:.2f} subset_bits={point.subset_search_bits:.2f}"
+        )
+
+    lines = [
+        "# hors-family-sweep",
+        f"feasible_points: {feasible_points}",
+        "",
+        "exact_byte_validation:",
+    ]
+    lines.extend([f"  {line}" for line in exact_validation])
+    lines.extend(
+        [
+            "",
+            "best_signed_digest_point:",
+            f"  {fmt(best_signed)}",
+            "",
+            "best_subset_search_point_any:",
+            f"  {fmt(best_subset)}",
+            "",
+            "top_signed_digest_points:",
+        ]
+    )
+    for point in top_signed:
+        lines.append(f"  {fmt(point)}")
+    lines.extend(["", "practical_subset_tradeoff_ladder:"])
+    for threshold in sorted(threshold_bests.keys(), reverse=True):
+        point = threshold_bests[threshold]
+        if point is None:
+            lines.append(f"  signed>={threshold}: none")
+        else:
+            lines.append(f"  signed>={threshold}: {fmt(point)}")
+    lines.extend(
+        [
+            "",
+            "order_invariance_probe:",
+            f"  n=6,t=3 ordered={probe_6_3[0]} unique_scriptcodes={probe_6_3[1]} multiplicity={probe_6_3[2]}",
+            f"  n=7,t=3 ordered={probe_7_3[0]} unique_scriptcodes={probe_7_3[1]} multiplicity={probe_7_3[2]}",
+            "",
+            "grouped_gap_formula:",
+            "  subset beats grouped-choice by approximately r*log2(e) - 0.5*log2(2*pi*r) bits when M >> r.",
+            f"  r=8 exact_gap={log2_binom(150, 8) - grouped_choice_max_bits(150, 8):.2f}",
+            f"  r=7 exact_gap={log2_binom(150, 7) - grouped_choice_max_bits(150, 7):.2f}",
+        ]
+    )
+    return "\n".join(lines)
+
+
 def main() -> None:
     calibrated = calibrate_qsb_configs()
     print(render_qsb_metrics(calibrated))
     print()
     print(render_structural_comparisons())
+    print()
+    print(render_hors_sweep())
 
 
 if __name__ == "__main__":
