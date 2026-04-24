@@ -50,6 +50,7 @@ from bitcoin_tx import (  # type: ignore
     OP_EQUALVERIFY,
     OP_HASH160,
     OP_MIN,
+    OP_OVER,
     OP_RIPEMD160_OP,
     OP_ROLL,
     OP_SWAP,
@@ -102,6 +103,10 @@ def data(name: str) -> Item:
     return Item("data", name)
 
 
+def qname(prefix: str, name: str) -> str:
+    return f"{prefix}:{name}" if prefix else name
+
+
 def int_item(value: int) -> Item:
     return Item("int", str(value), value=value)
 
@@ -134,16 +139,30 @@ class RoundShape:
     def total(self) -> int:
         return self.signed + self.bonus
 
+    @property
+    def max_index(self) -> int:
+        return max(self.poly, self.bonus_pool) - 1
+
 
 @dataclass(frozen=True)
 class RoundBuild:
     shape: RoundShape
     signed_gadget: str
+    script: bytes
     script_bytes: int
     ops: int
     witness_bytes: int
     selected_poly: tuple[str, ...]
     selected_bonus: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class FullBuild:
+    script: bytes
+    script_bytes: int
+    ops: int
+    witness_bytes: int
+    final_stack_depth: int
 
 
 class ScriptMachine:
@@ -189,6 +208,10 @@ class ScriptMachine:
             self.stack.append(int_item(left + right))
         elif opcode == OP_DUP:
             self.stack.append(self.stack[-1])
+        elif opcode == OP_OVER:
+            if len(self.stack) < 2:
+                raise AssertionError("OP_OVER needs at least two stack items")
+            self.stack.append(self.stack[-2])
         elif opcode == OP_HASH160:
             top = self.stack.pop()
             if top.kind != "preimage" or top.target is None:
@@ -209,7 +232,7 @@ class ScriptMachine:
         elif opcode == OP_CHECKSIGVERIFY:
             key = self.stack.pop()
             sig = self.stack.pop()
-            if key.kind != "data" or sig.kind != "hash":
+            if key.kind != "data" or sig.kind not in {"data", "hash"}:
                 raise AssertionError(f"bad CHECKSIGVERIFY pair: sig={sig} key={key}")
         elif opcode == OP_CHECKMULTISIG:
             self._checkmultisig()
@@ -234,7 +257,7 @@ class ScriptMachine:
         dummy = self.stack.pop()
         if m != n:
             raise AssertionError(f"CHECKMULTISIG m/n mismatch: {m}/{n}")
-        if dummy.name != "OP_0":
+        if dummy.name != "OP_0" and not dummy.name.endswith(":OP_0"):
             raise AssertionError(f"CHECKMULTISIG dummy mismatch: {dummy}")
         if any(item.kind != "data" for item in pubkeys):
             raise AssertionError(f"CHECKMULTISIG pubkey zone contains non-data: {pubkeys}")
@@ -280,15 +303,16 @@ def round_witness_stack(
     signed_indices: tuple[int, ...],
     bonus_indices: tuple[int, ...],
     selected_poly: tuple[str, ...],
+    prefix: str = "",
 ) -> list[Item]:
-    stack: list[Item] = [data("key_puzzle"), data("key_nonce")]
-    stack.extend(data(f"pub{i}") for i in reversed(range(shape.total)))
+    stack: list[Item] = [data(qname(prefix, "key_puzzle")), data(qname(prefix, "key_nonce"))]
+    stack.extend(data(qname(prefix, f"pub{i}")) for i in reversed(range(shape.total)))
     stack.extend(
-        preimage(f"pre{i}", selected_poly[i])
+        preimage(qname(prefix, f"pre{i}"), selected_poly[i])
         for i in reversed(range(shape.signed))
     )
     index_values = tuple(signed_indices) + tuple(bonus_indices)
-    stack.extend(named_int(f"idx{i}", index_values[i]) for i in reversed(range(shape.total)))
+    stack.extend(named_int(qname(prefix, f"idx{i}"), index_values[i]) for i in reversed(range(shape.total)))
     return stack
 
 
@@ -308,45 +332,47 @@ def last_remaining_indices(pool_size: int, count: int) -> tuple[int, ...]:
     return tuple(pool_size - 1 - idx for idx in range(count))
 
 
-def build_round(
+def selected_names(
+    prefix: str,
+    pool_prefix: str,
+    pool_size: int,
+    indices: tuple[int, ...],
+) -> tuple[str, ...]:
+    remaining = [qname(prefix, f"{pool_prefix}{i}") for i in range(pool_size)]
+    return tuple(select_from_remaining(remaining, idx) for idx in indices)
+
+
+def execute_round_script(
+    machine: ScriptMachine,
     shape: RoundShape,
-    signed_indices: tuple[int, ...] | None = None,
-    bonus_indices: tuple[int, ...] | None = None,
-    signed_gadget: str = "roll_dup",
+    signed_indices: tuple[int, ...],
+    bonus_indices: tuple[int, ...],
+    signed_gadget: str,
+    prefix: str = "",
 ) -> RoundBuild:
     if signed_gadget not in {"copy_roll", "roll_dup"}:
         raise ValueError(f"unknown signed gadget: {signed_gadget}")
-    signed_indices = signed_indices if signed_indices is not None else default_indices(shape.signed)
-    bonus_indices = bonus_indices if bonus_indices is not None else default_indices(shape.bonus)
     if len(signed_indices) != shape.signed or len(bonus_indices) != shape.bonus:
         raise ValueError("index vector length does not match round shape")
 
-    poly_remaining_for_witness = [f"P{i}" for i in range(shape.poly)]
-    selected_poly = tuple(
-        select_from_remaining(poly_remaining_for_witness, idx)
-        for idx in signed_indices
-    )
-    bonus_remaining_for_witness = [f"B{i}" for i in range(shape.bonus_pool)]
-    selected_bonus = tuple(
-        select_from_remaining(bonus_remaining_for_witness, idx)
-        for idx in bonus_indices
-    )
-
-    machine = ScriptMachine(round_witness_stack(shape, signed_indices, bonus_indices, selected_poly))
+    selected_poly = selected_names(prefix, "P", shape.poly, signed_indices)
+    selected_bonus = selected_names(prefix, "B", shape.bonus_pool, bonus_indices)
+    script_start = len(machine.script)
+    ops_start = machine.ops
 
     for idx in range(shape.bonus_pool - 1, -1, -1):
-        machine.push_data(data(f"B{idx}"), 9)
+        machine.push_data(data(qname(prefix, f"B{idx}")), 9)
     for idx in range(shape.poly - 1, -1, -1):
-        machine.push_data(data(f"P{idx}"), 20)
+        machine.push_data(data(qname(prefix, f"P{idx}")), 20)
     machine.script.append(OP_0)
-    machine.stack.append(data("OP_0"))
-    machine.push_data(data("sig_nonce"), shape.sig_len)
+    machine.stack.append(data(qname(prefix, "OP_0")))
+    machine.push_data(data(qname(prefix, "sig_nonce")), shape.sig_len)
 
-    poly_remaining = [f"P{i}" for i in range(shape.poly)]
+    poly_remaining = [qname(prefix, f"P{i}") for i in range(shape.poly)]
     for selection_index, witness_index in enumerate(signed_indices):
         selected = poly_remaining[witness_index]
 
-        roll_named(machine, f"idx{selection_index}")
+        roll_named(machine, qname(prefix, f"idx{selection_index}"))
         machine.push_int(len(poly_remaining) - 1)
         machine.op(OP_MIN)
 
@@ -354,26 +380,22 @@ def build_round(
             pick_by_index_from_pool(machine, poly_remaining[0])
         else:
             duplicate_selected_poly_by_index(machine, poly_remaining[0])
-        roll_named(machine, f"pre{selection_index}")
+        roll_named(machine, qname(prefix, f"pre{selection_index}"))
         machine.op(OP_HASH160)
         machine.op(OP_EQUALVERIFY)
 
         if signed_gadget == "copy_roll":
             roll_by_index_from_pool(machine, poly_remaining[0])
-            actual = machine.stack[-1]
-            if actual.name != selected:
-                raise AssertionError(f"selected poly mismatch: expected {selected}, got {actual}")
-        else:
-            actual = machine.stack[-1]
-            if actual.name != selected:
-                raise AssertionError(f"selected poly mismatch: expected {selected}, got {actual}")
+        actual = machine.stack[-1]
+        if actual.name != selected:
+            raise AssertionError(f"selected poly mismatch: expected {selected}, got {actual}")
         select_from_remaining(poly_remaining, witness_index)
 
-    bonus_remaining = [f"B{i}" for i in range(shape.bonus_pool)]
+    bonus_remaining = [qname(prefix, f"B{i}") for i in range(shape.bonus_pool)]
     for bonus_index, witness_index in enumerate(bonus_indices):
         selected = bonus_remaining[witness_index]
 
-        roll_named(machine, f"idx{shape.signed + bonus_index}")
+        roll_named(machine, qname(prefix, f"idx{shape.signed + bonus_index}"))
         machine.push_int(len(bonus_remaining) - 1)
         machine.op(OP_MIN)
         roll_by_index_from_pool(machine, bonus_remaining[0])
@@ -382,36 +404,47 @@ def build_round(
             raise AssertionError(f"selected bonus mismatch: expected {selected}, got {actual}")
         select_from_remaining(bonus_remaining, witness_index)
 
-    roll_named(machine, "key_nonce")
+    roll_named(machine, qname(prefix, "key_nonce"))
     machine.op(OP_DUP)
     machine.op(OP_RIPEMD160_OP)
-    roll_named(machine, "key_puzzle")
+    roll_named(machine, qname(prefix, "key_puzzle"))
     machine.op(OP_CHECKSIGVERIFY)
 
     multisig_count = shape.total + 1
     machine.push_int(multisig_count)
     machine.op(OP_SWAP)
     for pub_index in range(shape.total):
-        roll_named(machine, f"pub{pub_index}")
+        roll_named(machine, qname(prefix, f"pub{pub_index}"))
     machine.push_int(multisig_count)
     machine.op(OP_CHECKMULTISIG)
 
-    # Legacy consensus only requires a truthy top stack item at script end.
-    # Remaining hardcoded pool elements below it are harmless for this bare
-    # non-standard script setting; CLEANSTACK is a policy layer, not the gate
-    # this tool is trying to validate.
     if not machine.stack or machine.stack[-1].name != "cms_true":
         raise AssertionError(f"unexpected final stack: {machine.stack}")
 
     return RoundBuild(
         shape=shape,
         signed_gadget=signed_gadget,
-        script_bytes=len(machine.script),
-        ops=machine.ops,
+        script=bytes(machine.script[script_start:]),
+        script_bytes=len(machine.script) - script_start,
+        ops=machine.ops - ops_start,
         witness_bytes=witness_round_bytes(max(shape.poly, shape.bonus_pool) - 1, shape.signed, shape.bonus),
         selected_poly=selected_poly,
         selected_bonus=selected_bonus,
     )
+
+
+def build_round(
+    shape: RoundShape,
+    signed_indices: tuple[int, ...] | None = None,
+    bonus_indices: tuple[int, ...] | None = None,
+    signed_gadget: str = "roll_dup",
+) -> RoundBuild:
+    signed_indices = signed_indices if signed_indices is not None else default_indices(shape.signed)
+    bonus_indices = bonus_indices if bonus_indices is not None else default_indices(shape.bonus)
+    selected_poly = selected_names("", "P", shape.poly, signed_indices)
+
+    machine = ScriptMachine(round_witness_stack(shape, signed_indices, bonus_indices, selected_poly))
+    return execute_round_script(machine, shape, signed_indices, bonus_indices, signed_gadget)
 
 
 def witness_round_bytes(max_index: int, signed: int, bonus: int) -> int:
@@ -420,6 +453,89 @@ def witness_round_bytes(max_index: int, signed: int, bonus: int) -> int:
     preimage_push = len(push_data(b"\x00" * 20))
     total = signed + bonus
     return 2 * pubkey_push + total * pubkey_push + signed * preimage_push + total * idx_push
+
+
+def full_witness_stack(
+    round1: RoundShape,
+    round2: RoundShape,
+    round1_signed_indices: tuple[int, ...],
+    round1_bonus_indices: tuple[int, ...],
+    round2_signed_indices: tuple[int, ...],
+    round2_bonus_indices: tuple[int, ...],
+) -> list[Item]:
+    round1_selected_poly = selected_names("r1", "P", round1.poly, round1_signed_indices)
+    round2_selected_poly = selected_names("r2", "P", round2.poly, round2_signed_indices)
+    stack: list[Item] = []
+    stack.extend(round_witness_stack(round2, round2_signed_indices, round2_bonus_indices, round2_selected_poly, "r2"))
+    stack.extend(round_witness_stack(round1, round1_signed_indices, round1_bonus_indices, round1_selected_poly, "r1"))
+    stack.extend([data("pin:key_puzzle"), data("pin:key_nonce")])
+    return stack
+
+
+def execute_pinning_script(machine: ScriptMachine, sig_len: int = 70) -> None:
+    machine.push_data(data("pin:sig_nonce"), sig_len)
+    machine.op(OP_OVER)
+    machine.op(OP_CHECKSIGVERIFY)
+    machine.op(OP_RIPEMD160_OP)
+    machine.op(OP_SWAP)
+    machine.op(OP_CHECKSIGVERIFY)
+
+
+def build_full_script(
+    round1: RoundShape,
+    round2: RoundShape,
+    signed_gadget: str = "roll_dup",
+    round1_signed_indices: tuple[int, ...] | None = None,
+    round1_bonus_indices: tuple[int, ...] | None = None,
+    round2_signed_indices: tuple[int, ...] | None = None,
+    round2_bonus_indices: tuple[int, ...] | None = None,
+) -> FullBuild:
+    round1_signed_indices = round1_signed_indices or default_indices(round1.signed)
+    round1_bonus_indices = round1_bonus_indices or default_indices(round1.bonus)
+    round2_signed_indices = round2_signed_indices or default_indices(round2.signed)
+    round2_bonus_indices = round2_bonus_indices or default_indices(round2.bonus)
+
+    machine = ScriptMachine(
+        full_witness_stack(
+            round1,
+            round2,
+            round1_signed_indices,
+            round1_bonus_indices,
+            round2_signed_indices,
+            round2_bonus_indices,
+        )
+    )
+    execute_pinning_script(machine)
+    execute_round_script(
+        machine,
+        round1,
+        round1_signed_indices,
+        round1_bonus_indices,
+        signed_gadget,
+        "r1",
+    )
+    execute_round_script(
+        machine,
+        round2,
+        round2_signed_indices,
+        round2_bonus_indices,
+        signed_gadget,
+        "r2",
+    )
+    if not machine.stack or machine.stack[-1].name != "cms_true":
+        raise AssertionError(f"unexpected full-script final stack: {machine.stack}")
+
+    return FullBuild(
+        script=bytes(machine.script),
+        script_bytes=len(machine.script),
+        ops=machine.ops,
+        witness_bytes=(
+            witness_round_bytes(round2.max_index, round2.signed, round2.bonus)
+            + witness_round_bytes(round1.max_index, round1.signed, round1.bonus)
+            + 2 * len(push_data(b"\x02" + b"\x00" * 32))
+        ),
+        final_stack_depth=len(machine.stack),
+    )
 
 
 @dataclass(frozen=True)
@@ -560,6 +676,7 @@ def dominates(left: RoundCandidate, right: RoundCandidate) -> bool:
 def best_points_by_setup_total(
     max_setup_total: int = SEARCH_CAPS[-1],
     signed_gadget: str = "roll_dup",
+    full_accounting: bool = False,
 ) -> dict[int, StackCorrectPoint]:
     candidates = round_candidates(
         max_poly=min(MAX_POLY_PER_ROUND, max_setup_total - 1),
@@ -571,8 +688,24 @@ def best_points_by_setup_total(
             setup_total = round1.poly + round2.poly
             if setup_total > max_setup_total:
                 continue
-            ops = 5 + round1.ops + round2.ops
-            bytes_ = PINNING_BYTES + round1.bytes70 + round2.bytes71
+            estimated_ops = 5 + round1.ops + round2.ops
+            estimated_bytes = PINNING_BYTES + round1.bytes70 + round2.bytes71
+            if estimated_ops > MAX_OPS or estimated_bytes > MAX_SCRIPT_BYTES + 750:
+                continue
+            if full_accounting:
+                try:
+                    full_build = build_full_script(
+                        RoundShape(round1.poly, round1.bonus_pool, round1.signed, round1.bonus, 70),
+                        RoundShape(round2.poly, round2.bonus_pool, round2.signed, round2.bonus, 71),
+                        signed_gadget=signed_gadget,
+                    )
+                except (AssertionError, ValueError):
+                    continue
+                ops = full_build.ops
+                bytes_ = full_build.script_bytes
+            else:
+                ops = estimated_ops
+                bytes_ = estimated_bytes
             if ops > MAX_OPS or bytes_ > MAX_SCRIPT_BYTES:
                 continue
             point = StackCorrectPoint(round1=round1, round2=round2, ops=ops, bytes=bytes_)
@@ -608,7 +741,7 @@ def render_stack_correct_builder_demo() -> str:
     )
     alternate_status = (
         "pass"
-        if (alternate.script_bytes, alternate.ops) == (round_build.script_bytes, round_build.ops)
+        if alternate.script == round_build.script
         else "fail"
     )
     lines = [
@@ -629,11 +762,11 @@ def render_stack_correct_builder_demo() -> str:
     return "\n".join(lines)
 
 
-def render_frontier(signed_gadget: str = "roll_dup") -> str:
+def render_frontier(signed_gadget: str = "roll_dup", full_accounting: bool = False) -> str:
     refs = {ref.name: ref for ref in corrected_references()}
     config_a = refs["configA_8p1b_7p2b"]
     baseline = refs["baseline_8_8"]
-    best_by_total = best_points_by_setup_total(signed_gadget=signed_gadget)
+    best_by_total = best_points_by_setup_total(signed_gadget=signed_gadget, full_accounting=full_accounting)
 
     first_config_a = next(
         (
@@ -653,7 +786,13 @@ def render_frontier(signed_gadget: str = "roll_dup") -> str:
         None,
     )
 
-    lines = ["# stack-correct-polyglot-frontier", "", f"signed_gadget={signed_gadget}", ""]
+    lines = [
+        "# stack-correct-polyglot-frontier",
+        "",
+        f"signed_gadget={signed_gadget}",
+        f"accounting={'full_script' if full_accounting else 'round_composed'}",
+        "",
+    ]
     if first_config_a is None:
         lines.extend(["first_point_beating_configA: none", ""])
     else:
@@ -699,6 +838,75 @@ def render_frontier(signed_gadget: str = "roll_dup") -> str:
     return "\n".join(lines)
 
 
+def validation_targets() -> tuple[tuple[str, RoundShape, RoundShape], ...]:
+    return (
+        (
+            "configA_143",
+            RoundShape(poly=64, bonus_pool=206, signed=8, bonus=2, sig_len=70),
+            RoundShape(poly=79, bonus_pool=65, signed=10, bonus=1, sig_len=71),
+        ),
+        (
+            "baseline_collision_198",
+            RoundShape(poly=94, bonus_pool=88, signed=9, bonus=1, sig_len=70),
+            RoundShape(poly=104, bonus_pool=4, signed=10, bonus=1, sig_len=71),
+        ),
+        (
+            "strong_practical_224",
+            RoundShape(poly=106, bonus_pool=29, signed=9, bonus=1, sig_len=70),
+            RoundShape(poly=118, bonus_pool=0, signed=10, bonus=0, sig_len=71),
+        ),
+    )
+
+
+def render_full_script_validation(signed_gadget: str = "roll_dup") -> str:
+    lines = [
+        "# full-script-validation",
+        "",
+        f"signed_gadget={signed_gadget}",
+        "semantics=top_stack_truth",
+        "",
+    ]
+    for name, round1, round2 in validation_targets():
+        round1_build = build_round(round1, signed_gadget=signed_gadget)
+        round2_build = build_round(round2, signed_gadget=signed_gadget)
+        round_composed_bytes = PINNING_BYTES + round1_build.script_bytes + round2_build.script_bytes
+        round_composed_ops = 5 + round1_build.ops + round2_build.ops
+        default = build_full_script(round1, round2, signed_gadget=signed_gadget)
+        alternate = build_full_script(
+            round1,
+            round2,
+            signed_gadget=signed_gadget,
+            round1_signed_indices=last_remaining_indices(round1.poly, round1.signed),
+            round1_bonus_indices=last_remaining_indices(round1.bonus_pool, round1.bonus),
+            round2_signed_indices=last_remaining_indices(round2.poly, round2.signed),
+            round2_bonus_indices=last_remaining_indices(round2.bonus_pool, round2.bonus),
+        )
+        same_script = "pass" if default.script == alternate.script else "fail"
+        limits = "pass" if default.ops <= MAX_OPS and default.script_bytes <= MAX_SCRIPT_BYTES else "fail"
+        cleanstack = "pass" if default.final_stack_depth == 1 else "fail"
+        lines.extend(
+            [
+                f"{name}:",
+                f"  r1: m={round1.poly} q={round1.bonus_pool} s={round1.signed} b={round1.bonus}",
+                f"  r2: m={round2.poly} q={round2.bonus_pool} s={round2.signed} b={round2.bonus}",
+                f"  round_composed_bytes={round_composed_bytes}",
+                f"  round_composed_ops={round_composed_ops}",
+                f"  full_script_bytes={default.script_bytes}",
+                f"  full_ops={default.ops}",
+                f"  byte_delta={default.script_bytes - round_composed_bytes}",
+                f"  op_delta={default.ops - round_composed_ops}",
+                f"  witness_bytes={default.witness_bytes}",
+                f"  final_stack_depth={default.final_stack_depth}",
+                f"  consensus_limit_check={limits}",
+                f"  cleanstack_depth_one_check={cleanstack}",
+                f"  alternate_index_same_script={same_script}",
+                f"  alternate_final_stack_depth={alternate.final_stack_depth}",
+                "",
+            ]
+        )
+    return "\n".join(lines).rstrip()
+
+
 def render_point(name: str, setup_total: int, point: StackCorrectPoint) -> list[str]:
     return [
         f"{name}:",
@@ -734,6 +942,8 @@ def main() -> None:
     print(render_stack_correct_builder_demo())
     print()
     print(render_frontier(signed_gadget=args.signed_gadget))
+    print()
+    print(render_full_script_validation(signed_gadget=args.signed_gadget))
 
 
 if __name__ == "__main__":
