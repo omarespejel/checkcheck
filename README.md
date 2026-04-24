@@ -52,15 +52,15 @@ If the optimizer fails to find such a candidate after a serious search, that is 
 
 ## Current result
 
-The current strongest result is in [`docs/results/2026-04-24-frontier-13.md`](./docs/results/2026-04-24-frontier-13.md).
+The current strongest result is in [`docs/results/2026-04-24-frontier-14.md`](./docs/results/2026-04-24-frontier-14.md).
 
 In short:
 
-- explicit triple-anchor DER templates also stay exactly on the subset baseline in every checked case
-- that now holds in exhaustive exact `26` / `27` families and sampled variants with pools up to `81`
-- the repo has now exhausted one-, two-, and three-anchor DER constructions without finding conflict or extra states
+- the polyglot digest branch is the first one that materially reopens the frontier under the same Bitcoin limits
+- same `n=150`, all-signed `10/10` becomes feasible at `201` ops and only `6953` bytes, beating both public QSB configs on signed digest bits
+- the blocker moves from script budget to trusted setup: the main cost is now the one-time local grind for polyglot elements, not FindAndDelete geometry
 
-That shifts the repo again: plain DER-shaped selectable blobs now look very close to exhausted, so the highest-ROI next step is probably a different valid selectable blob family rather than another DER anchor variant.
+That shifts the repo from “DER-shaped blobs look exhausted” to “polyglot setup economics are now the main frontier.”
 
 ## Is this post-quantum safe?
 
@@ -98,11 +98,13 @@ checkcheck/
       2026-04-24-frontier-11.md
       2026-04-24-frontier-12.md
       2026-04-24-frontier-13.md
+      2026-04-24-frontier-14.md
   specs/
     compiler.md
   third_party/
     README.md
   tools/
+    polyglot_frontier.py
     der_triple_anchor_frontier.py
     der_double_anchor_frontier.py
     der_conflict_lift_frontier.py
