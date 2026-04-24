@@ -52,7 +52,7 @@ If the optimizer fails to find such a candidate after a serious search, that is 
 
 ## Current result
 
-The current decision gate is in [`docs/results/2026-04-24-frontier-21.md`](./docs/results/2026-04-24-frontier-21.md).
+The current decision gate is in [`docs/results/2026-04-24-frontier-22.md`](./docs/results/2026-04-24-frontier-22.md).
 
 In short:
 
@@ -69,6 +69,8 @@ In short:
 - `frontier-21` runs an external `python-bitcoinlib` interpreter gate and finds a real accounting bug: `OP_CHECKMULTISIG` must be charged by key count
 - after sigop-corrected accounting, the first Config-A crossing moves to `181`, the first baseline-collision crossing moves to `258`, and the old `224` point no longer fits
 - the corrected `258` point passes byte-level interpreter validation with signature checks stubbed and cleanstack disabled
+- `frontier-22` prices the trusted setup honestly: the corrected `258` point needs about `2^54.41` HASH160 trials for structural DER hits, or roughly `2^55.41` with recoverable-`r` filtering
+- local full cryptographic validation is **NO-GO**; the branch only continues if we are willing to run GPU/distributed setup
 
 That shifts the repo:
 
@@ -78,7 +80,7 @@ from
 
 to
 
-"replace the signature stubs with a trusted-setup artifact generator and rerun the interpreter gate without stubs."
+"either fund/export a GPU trusted setup for `configA_sigop_corrected_181`, or stop and write this up as a conditional result."
 
 ## Is this post-quantum safe?
 
@@ -125,6 +127,7 @@ checkcheck/
       2026-04-24-frontier-19.md
       2026-04-24-frontier-20.md
       2026-04-24-frontier-21.md
+      2026-04-24-frontier-22.md
   specs/
     compiler.md
   third_party/
@@ -135,6 +138,7 @@ checkcheck/
     polyglot_setup_frontier.py
     polyglot_frontier.py
     polyglot_interpreter_gate.py
+    polyglot_trusted_setup_probe.py
     der_triple_anchor_frontier.py
     der_double_anchor_frontier.py
     der_conflict_lift_frontier.py
