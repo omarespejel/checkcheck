@@ -52,15 +52,15 @@ If the optimizer fails to find such a candidate after a serious search, that is 
 
 ## Current result
 
-The current strongest result is in [`docs/results/2026-04-24-frontier-12.md`](./docs/results/2026-04-24-frontier-12.md).
+The current strongest result is in [`docs/results/2026-04-24-frontier-13.md`](./docs/results/2026-04-24-frontier-13.md).
 
 In short:
 
-- explicit two-anchor DER templates stay exactly on the subset baseline in every checked case
-- that now holds in exhaustive exact `20` / `21` / `22` families and wider sampled variants up to pool size `81`
-- the DER path is narrower again: even mechanism-aware double-anchor constructions still do not produce conflict or extra states
+- explicit triple-anchor DER templates also stay exactly on the subset baseline in every checked case
+- that now holds in exhaustive exact `26` / `27` families and sampled variants with pools up to `81`
+- the repo has now exhausted one-, two-, and three-anchor DER constructions without finding conflict or extra states
 
-That shifts the repo from “single-anchor DER probably fails” to “plain DER-shaped selectable blobs look close to exhausted,” pushing the next step toward repeated-body / heavier multi-anchor constructions or a different valid blob family entirely.
+That shifts the repo again: plain DER-shaped selectable blobs now look very close to exhausted, so the highest-ROI next step is probably a different valid selectable blob family rather than another DER anchor variant.
 
 ## Is this post-quantum safe?
 
@@ -97,11 +97,13 @@ checkcheck/
       2026-04-24-frontier-10.md
       2026-04-24-frontier-11.md
       2026-04-24-frontier-12.md
+      2026-04-24-frontier-13.md
   specs/
     compiler.md
   third_party/
     README.md
   tools/
+    der_triple_anchor_frontier.py
     der_double_anchor_frontier.py
     der_conflict_lift_frontier.py
     fad_conflict_collapse_frontier.py
