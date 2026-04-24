@@ -52,17 +52,16 @@ If the optimizer fails to find such a candidate after a serious search, that is 
 
 ## Current result
 
-The current strongest result is in [`docs/results/2026-04-24-frontier-3.md`](./docs/results/2026-04-24-frontier-3.md).
+The current strongest result is in [`docs/results/2026-04-24-frontier-4.md`](./docs/results/2026-04-24-frontier-4.md).
 
 In short:
 
-- the public QSB baseline `150,8,8` is already the exact signed-digest optimum inside the current HORS-like family
-- the public Config A point is already the exact best search-space tradeoff once you require about `80` signed bits
-- grouped-choice is structurally dominated
-- ordered witness permutations collapse to the same searched scriptCode on the actual QSB 9-byte dummy-signature surface
-- but overlap-coded `FindAndDelete` is real in toy constructions, which means the next frontier is likely an engineered overlap surface rather than another obvious family tweak
+- fixed length alone does not kill overlap-coded `FindAndDelete`
+- engineered arbitrary 9-byte payload families can still beat the plain subset baseline
+- but the actual valid minimal-DER 9-byte surface used by QSB is cross-bifix-free
+- that means the current QSB dummy-signature surface is not merely unexploited; it is structurally unable to realize overlap-coded gains
 
-That shifts the repo from "compare known families" toward "search for selectable token families that make `FindAndDelete` itself more expressive without blowing the byte budget."
+That shifts the repo from "search harder inside minimal 9-byte DER" toward "search for other valid selectable blob surfaces, or move to longer / non-minimal constructions and re-price the byte budget."
 
 ## Is this post-quantum safe?
 
@@ -89,6 +88,8 @@ checkcheck/
       2026-04-24-frontier-0.md
       2026-04-24-frontier-1.md
       2026-04-24-frontier-2.md
+      2026-04-24-frontier-3.md
+      2026-04-24-frontier-4.md
   specs/
     compiler.md
   third_party/
