@@ -251,6 +251,10 @@ class ScriptMachine:
 
     def _checkmultisig(self) -> None:
         n = self._pop_int("OP_CHECKMULTISIG n")
+        # Bitcoin's MAX_OPS_PER_SCRIPT accounting charges CHECKMULTISIG by
+        # pubkey count in addition to the opcode itself. python-bitcoinlib and
+        # Bitcoin Core both add n here after the normal non-push opcode charge.
+        self.ops += n
         pubkeys = [self.stack.pop() for _ in range(n)]
         m = self._pop_int("OP_CHECKMULTISIG m")
         sigs = [self.stack.pop() for _ in range(m)]
@@ -841,19 +845,19 @@ def render_frontier(signed_gadget: str = "roll_dup", full_accounting: bool = Fal
 def validation_targets() -> tuple[tuple[str, RoundShape, RoundShape], ...]:
     return (
         (
-            "configA_143",
-            RoundShape(poly=64, bonus_pool=206, signed=8, bonus=2, sig_len=70),
-            RoundShape(poly=79, bonus_pool=65, signed=10, bonus=1, sig_len=71),
+            "configA_sigop_corrected_181",
+            RoundShape(poly=79, bonus_pool=254, signed=7, bonus=2, sig_len=70),
+            RoundShape(poly=102, bonus_pool=41, signed=9, bonus=1, sig_len=71),
         ),
         (
-            "baseline_collision_198",
-            RoundShape(poly=94, bonus_pool=88, signed=9, bonus=1, sig_len=70),
-            RoundShape(poly=104, bonus_pool=4, signed=10, bonus=1, sig_len=71),
+            "baseline_collision_sigop_corrected_258",
+            RoundShape(poly=106, bonus_pool=308, signed=8, bonus=1, sig_len=70),
+            RoundShape(poly=152, bonus_pool=0, signed=9, bonus=0, sig_len=71),
         ),
         (
-            "strong_practical_224",
-            RoundShape(poly=106, bonus_pool=29, signed=9, bonus=1, sig_len=70),
-            RoundShape(poly=118, bonus_pool=0, signed=10, bonus=0, sig_len=71),
+            "cap300_sigop_corrected",
+            RoundShape(poly=141, bonus_pool=30, signed=8, bonus=1, sig_len=70),
+            RoundShape(poly=159, bonus_pool=0, signed=9, bonus=0, sig_len=71),
         ),
     )
 

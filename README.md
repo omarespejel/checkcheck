@@ -52,7 +52,7 @@ If the optimizer fails to find such a candidate after a serious search, that is 
 
 ## Current result
 
-The current decision gate is in [`docs/results/2026-04-24-frontier-20.md`](./docs/results/2026-04-24-frontier-20.md).
+The current decision gate is in [`docs/results/2026-04-24-frontier-21.md`](./docs/results/2026-04-24-frontier-21.md).
 
 In short:
 
@@ -62,10 +62,13 @@ In short:
 - `frontier-17` adds a stack-feasibility gate and returns **NO-GO** for further economics tuning
 - `frontier-18` adds a conservative stack-correct polyglot round skeleton and shows that version is too expensive
 - `frontier-19` finds a cheaper `OP_ROLL + OP_DUP` selection gadget that avoids `OP_PICK + OP_ROLL`
-- the old `143` trusted-element result survives under emitted stack-correct accounting
-- the first stack-correct baseline-collision crossing appears at `198` trusted elements, with the stronger practical point at `224`
-- `frontier-20` validates pinning + round 1 + round 2 as one symbolic script and shows those three points still fit the byte/opcode envelope
+- the old `143` trusted-element result survives under emitted stack-correct accounting before sigop correction
+- the first pre-sigop-correction stack-correct baseline-collision crossing appears at `198` trusted elements, with the stronger practical point at `224`
+- `frontier-20` validates pinning + round 1 + round 2 as one symbolic script and shows those pre-sigop-correction points fit the byte/non-push envelope
 - `frontier-20` also makes the honest limitation explicit: the construction leaves stack residue, so it is a non-standard / miner-direct path, not a cleanstack standard-relay claim
+- `frontier-21` runs an external `python-bitcoinlib` interpreter gate and finds a real accounting bug: `OP_CHECKMULTISIG` must be charged by key count
+- after sigop-corrected accounting, the first Config-A crossing moves to `181`, the first baseline-collision crossing moves to `258`, and the old `224` point no longer fits
+- the corrected `258` point passes byte-level interpreter validation with signature checks stubbed and cleanstack disabled
 
 That shifts the repo:
 
@@ -75,7 +78,7 @@ from
 
 to
 
-"run the full script through an external Bitcoin Script interpreter with explicit consensus-vs-standardness flags."
+"replace the signature stubs with a trusted-setup artifact generator and rerun the interpreter gate without stubs."
 
 ## Is this post-quantum safe?
 
@@ -95,6 +98,7 @@ So the honest framing is:
 ```text
 checkcheck/
   README.md
+  requirements-interpreter.txt
   docs/
     background-hash-functions.md
     mvp.md
@@ -120,6 +124,7 @@ checkcheck/
       2026-04-24-frontier-18.md
       2026-04-24-frontier-19.md
       2026-04-24-frontier-20.md
+      2026-04-24-frontier-21.md
   specs/
     compiler.md
   third_party/
@@ -129,6 +134,7 @@ checkcheck/
     qsb_stack_sanity.py
     polyglot_setup_frontier.py
     polyglot_frontier.py
+    polyglot_interpreter_gate.py
     der_triple_anchor_frontier.py
     der_double_anchor_frontier.py
     der_conflict_lift_frontier.py
