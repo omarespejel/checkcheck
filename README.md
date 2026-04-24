@@ -52,15 +52,19 @@ If the optimizer fails to find such a candidate after a serious search, that is 
 
 ## Current result
 
-The current strongest result is in [`docs/results/2026-04-24-frontier-14.md`](./docs/results/2026-04-24-frontier-14.md).
+The current strongest result is in [`docs/results/2026-04-24-frontier-15.md`](./docs/results/2026-04-24-frontier-15.md).
 
 In short:
 
-- the polyglot digest branch is the first one that materially reopens the frontier under the same Bitcoin limits
-- same `n=150`, all-signed `10/10` becomes feasible at `201` ops and only `6953` bytes, beating both public QSB configs on signed digest bits
-- the blocker moves from script budget to trusted setup: the main cost is now the one-time local grind for polyglot elements, not FindAndDelete geometry
+- `frontier-14` was directionally right about bytes and ops, but too optimistic about second-preimage security
+- after correcting the accounting to match the upstream QSB paper, full polyglot still wins on script size and collision resistance, but it does **not** create a new second-preimage regime
+- trusted setup is now priced explicitly, and that makes the real frontier much narrower
+- the first setup-aware branch worth keeping is a split-pool partial-polyglot family:
+  around `192` to `224` trusted polyglot elements it starts beating Config A and then the public baseline on the security metrics that matter, while staying far below the byte limit
 
-That shifts the repo from “DER-shaped blobs look exhausted” to “polyglot setup economics are now the main frontier.”
+That shifts the repo from “polyglot reopens the frontier” to the stricter claim:
+
+“polyglot is still the only positive branch after the DER work, but its real value is collision/script efficiency, and setup cost is now the main bottleneck.”
 
 ## Is this post-quantum safe?
 
@@ -99,11 +103,13 @@ checkcheck/
       2026-04-24-frontier-12.md
       2026-04-24-frontier-13.md
       2026-04-24-frontier-14.md
+      2026-04-24-frontier-15.md
   specs/
     compiler.md
   third_party/
     README.md
   tools/
+    polyglot_setup_frontier.py
     polyglot_frontier.py
     der_triple_anchor_frontier.py
     der_double_anchor_frontier.py
