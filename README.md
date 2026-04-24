@@ -52,15 +52,15 @@ If the optimizer fails to find such a candidate after a serious search, that is 
 
 ## Current result
 
-The current strongest result is in [`docs/results/2026-04-24-frontier-8.md`](./docs/results/2026-04-24-frontier-8.md).
+The current strongest result is in [`docs/results/2026-04-24-frontier-9.md`](./docs/results/2026-04-24-frontier-9.md).
 
 In short:
 
-- toy overlap works because deletion creates fresh later-match occurrences
-- explicit overlap-bearing exact-`13` DER families do contain real pushed-token overlaps, but they show no fresh-occurrence cascades
-- random exact DER families also showed no cascade witnesses in the searched regimes
+- cascade is not the full story; some expressive toy orders are conflict-only and still beat the subset baseline
+- in the exhaustively searched toy universes, every expressive order had a destructive-conflict witness
+- overlap-bearing exact-`13` DER families showed no destructive-conflict witness either
 
-That shifts the repo from "find overlap-bearing DER" toward "find a valid blob family that can actually create fresh deletable occurrences, or leave DER behind."
+That shifts the repo from "look for overlap-bearing DER" toward "look for valid blob families with real conflict structure, or stop optimizing `FindAndDelete` overlap at all."
 
 ## Is this post-quantum safe?
 
@@ -93,12 +93,14 @@ checkcheck/
       2026-04-24-frontier-6.md
       2026-04-24-frontier-7.md
       2026-04-24-frontier-8.md
+      2026-04-24-frontier-9.md
   specs/
     compiler.md
   third_party/
     README.md
   tools/
     fad_cascade_frontier.py
+    fad_mechanism_frontier.py
     der_higher_order_frontier.py
     der_overlap_threshold_frontier.py
     der_surface_frontier.py
