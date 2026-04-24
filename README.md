@@ -52,19 +52,23 @@ If the optimizer fails to find such a candidate after a serious search, that is 
 
 ## Current result
 
-The current strongest result is in [`docs/results/2026-04-24-frontier-15.md`](./docs/results/2026-04-24-frontier-15.md).
+The current strongest result is in [`docs/results/2026-04-24-frontier-16.md`](./docs/results/2026-04-24-frontier-16.md).
 
 In short:
 
-- `frontier-14` was directionally right about bytes and ops, but too optimistic about second-preimage security
-- after correcting the accounting to match the upstream QSB paper, full polyglot still wins on script size and collision resistance, but it does **not** create a new second-preimage regime
-- trusted setup is now priced explicitly, and that makes the real frontier much narrower
-- the first setup-aware branch worth keeping is a split-pool partial-polyglot family:
-  around `192` to `224` trusted polyglot elements it starts beating Config A and then the public baseline on the security metrics that matter, while staying far below the byte limit
+- `frontier-15` showed that polyglot remains real after corrected accounting, but setup cost dominates
+- `frontier-16` shows the best surviving partial-polyglot family is **asymmetric**, not symmetric
+- once the two digest rounds are allowed to differ, the first Config-A-beating threshold drops from `192` trusted polyglot elements to `143`
+- the first baseline-collision crossing drops from `224` to `200`
+- witness size stays roughly flat in the interesting region, so the blocker is still trusted setup rather than witness blowup
 
-That shifts the repo from “polyglot reopens the frontier” to the stricter claim:
+That shifts the repo again:
 
-“polyglot is still the only positive branch after the DER work, but its real value is collision/script efficiency, and setup cost is now the main bottleneck.”
+from “polyglot is the only positive branch”
+
+to
+
+“the only positive branch still standing is an asymmetric partial-polyglot family, and the next work is making that family script-faithful while pushing the setup threshold lower.”
 
 ## Is this post-quantum safe?
 
@@ -104,6 +108,7 @@ checkcheck/
       2026-04-24-frontier-13.md
       2026-04-24-frontier-14.md
       2026-04-24-frontier-15.md
+      2026-04-24-frontier-16.md
   specs/
     compiler.md
   third_party/

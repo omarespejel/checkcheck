@@ -37,7 +37,7 @@ if str(TOOLS) not in sys.path:
 if str(UPSTREAM_PIPELINE) not in sys.path:
     sys.path.insert(0, str(UPSTREAM_PIPELINE))
 
-from bitcoin_tx import push_number  # type: ignore
+from bitcoin_tx import push_data, push_number  # type: ignore
 from frontier_model import QSBConfig, calibrate_qsb_configs  # type: ignore
 
 
@@ -49,6 +49,11 @@ HASHES_PER_ELEMENT = 2**PINNING_BITS
 GHASH = 1_000_000_000
 TEN_GHASH = 10_000_000_000
 SEARCH_CAPS = (128, 160, 192, 224, 256, 300)
+MAX_POLY_PER_ROUND = 180
+MAX_BONUS_PER_ROUND = 3
+MAX_SIGNED_PER_ROUND = 10
+COMPRESSED_PUBKEY_PUSH = len(push_data(b"\x02" + b"\x00" * 32))
+PREIMAGE_PUSH = len(push_data(b"\x00" * 20))
 
 
 def log2_binom(n: int, k: int) -> float:
@@ -67,6 +72,27 @@ def setup_bits_for(elements: int) -> float:
 
 def days_at_rate(hashes: float, rate_hps: float) -> float:
     return hashes / rate_hps / 86_400
+
+
+def witness_round_bytes(max_index: int, signed: int, bonus: int) -> int:
+    idx_push = len(push_number(max_index))
+    t_total = signed + bonus
+    return 2 * COMPRESSED_PUBKEY_PUSH + t_total * COMPRESSED_PUBKEY_PUSH + signed * PREIMAGE_PUSH + t_total * idx_push
+
+
+def total_witness_bytes(
+    max_index_round1: int,
+    signed_round1: int,
+    bonus_round1: int,
+    max_index_round2: int,
+    signed_round2: int,
+    bonus_round2: int,
+) -> int:
+    return (
+        witness_round_bytes(max_index_round2, signed_round2, bonus_round2)
+        + witness_round_bytes(max_index_round1, signed_round1, bonus_round1)
+        + 2 * COMPRESSED_PUBKEY_PUSH
+    )
 
 
 def reference_bonus_free_bits(cfg: QSBConfig) -> float:
@@ -191,6 +217,10 @@ class FullPolyglotPoint:
     def collision_bits(self) -> float:
         return PINNING_BITS + self.signed_digest_bits / 2
 
+    @property
+    def witness_bytes(self) -> int:
+        return total_witness_bytes(self.n - 1, self.t1, 0, self.n - 1, self.t2, 0)
+
 
 def full_polyglot_point(n: int, t1: int, t2: int) -> FullPolyglotPoint:
     ops = 5 + (9 * t1 + 8) + (9 * t2 + 8)
@@ -313,6 +343,18 @@ class SymmetricSplitPoolPoint:
     def collision_bits(self) -> float:
         return PINNING_BITS + self.signed_digest_bits / 2
 
+    @property
+    def witness_bytes(self) -> int:
+        max_index = max(self.poly_per_round, self.bonus_pool_per_round) - 1
+        return total_witness_bytes(
+            max_index,
+            self.signed_per_round,
+            self.bonus_per_round,
+            max_index,
+            self.signed_per_round,
+            self.bonus_per_round,
+        )
+
 
 def symmetric_split_pool_point(poly: int, signed: int, bonus: int) -> SymmetricSplitPoolPoint | None:
     signed_bits_round = log2_binom(poly, signed)
@@ -365,6 +407,172 @@ def best_symmetric_split_pool_under_cap(cap: int) -> SymmetricSplitPoolPoint | N
     return best
 
 
+@dataclass(frozen=True)
+class RoundCandidate:
+    poly: int
+    bonus_pool: int
+    signed: int
+    bonus: int
+    ops: int
+    bytes70: int
+    bytes71: int
+    witness_bytes: int
+    signed_bits: float
+    bonus_free_bits: float
+
+    @property
+    def max_index(self) -> int:
+        return max(self.poly, self.bonus_pool) - 1
+
+
+@dataclass(frozen=True)
+class AsymmetricSplitPoolPoint:
+    round1: RoundCandidate
+    round2: RoundCandidate
+    ops: int
+    bytes: int
+
+    @property
+    def witness_bytes(self) -> int:
+        return total_witness_bytes(
+            self.round1.max_index,
+            self.round1.signed,
+            self.round1.bonus,
+            self.round2.max_index,
+            self.round2.signed,
+            self.round2.bonus,
+        )
+
+    @property
+    def setup_elements(self) -> int:
+        return self.round1.poly + self.round2.poly
+
+    @property
+    def setup_hashes(self) -> float:
+        return setup_hashes_for(self.setup_elements)
+
+    @property
+    def setup_bits(self) -> float:
+        return setup_bits_for(self.setup_elements)
+
+    @property
+    def signed_digest_bits(self) -> float:
+        return self.round1.signed_bits + self.round2.signed_bits
+
+    @property
+    def bonus_free_bits(self) -> float:
+        return self.round1.bonus_free_bits + self.round2.bonus_free_bits
+
+    @property
+    def second_preimage_bits(self) -> float:
+        return 3 * PINNING_BITS - self.bonus_free_bits
+
+    @property
+    def collision_bits(self) -> float:
+        return PINNING_BITS + self.signed_digest_bits / 2
+
+
+def round_candidates(max_poly: int = MAX_POLY_PER_ROUND) -> list[RoundCandidate]:
+    candidates: list[RoundCandidate] = []
+    for poly in range(1, max_poly + 1):
+        for signed in range(1, min(MAX_SIGNED_PER_ROUND, poly) + 1):
+            signed_bits = log2_binom(poly, signed)
+            for bonus in range(0, MAX_BONUS_PER_ROUND + 1):
+                bonus_pool = min_bonus_pool_for(PINNING_BITS - signed_bits, bonus)
+                if bonus_pool is None:
+                    continue
+                candidates.append(
+                    RoundCandidate(
+                        poly=poly,
+                        bonus_pool=bonus_pool,
+                        signed=signed,
+                        bonus=bonus,
+                        ops=9 * signed + 6 * bonus + 8,
+                        bytes70=split_round_bytes_exact(poly, bonus_pool, signed, bonus, 70),
+                        bytes71=split_round_bytes_exact(poly, bonus_pool, signed, bonus, 71),
+                        witness_bytes=witness_round_bytes(max(poly, bonus_pool) - 1, signed, bonus),
+                        signed_bits=signed_bits,
+                        bonus_free_bits=0.0 if bonus == 0 else log2_binom(bonus_pool, bonus),
+                    )
+                )
+
+    pruned: list[RoundCandidate] = []
+    for candidate in candidates:
+        dominated = False
+        for incumbent in pruned[:]:
+            if (
+                incumbent.poly <= candidate.poly
+                and incumbent.ops <= candidate.ops
+                and incumbent.bytes70 <= candidate.bytes70
+                and incumbent.bytes71 <= candidate.bytes71
+                and incumbent.witness_bytes <= candidate.witness_bytes
+                and incumbent.signed_bits >= candidate.signed_bits
+                and incumbent.bonus_free_bits <= candidate.bonus_free_bits
+                and (
+                    incumbent.poly < candidate.poly
+                    or incumbent.ops < candidate.ops
+                    or incumbent.bytes70 < candidate.bytes70
+                    or incumbent.bytes71 < candidate.bytes71
+                    or incumbent.witness_bytes < candidate.witness_bytes
+                    or incumbent.signed_bits > candidate.signed_bits
+                    or incumbent.bonus_free_bits < candidate.bonus_free_bits
+                )
+            ):
+                dominated = True
+                break
+            if (
+                candidate.poly <= incumbent.poly
+                and candidate.ops <= incumbent.ops
+                and candidate.bytes70 <= incumbent.bytes70
+                and candidate.bytes71 <= incumbent.bytes71
+                and candidate.witness_bytes <= incumbent.witness_bytes
+                and candidate.signed_bits >= incumbent.signed_bits
+                and candidate.bonus_free_bits <= incumbent.bonus_free_bits
+                and (
+                    candidate.poly < incumbent.poly
+                    or candidate.ops < incumbent.ops
+                    or candidate.bytes70 < incumbent.bytes70
+                    or candidate.bytes71 < incumbent.bytes71
+                    or candidate.witness_bytes < incumbent.witness_bytes
+                    or candidate.signed_bits > incumbent.signed_bits
+                    or candidate.bonus_free_bits < incumbent.bonus_free_bits
+                )
+            ):
+                pruned.remove(incumbent)
+        if not dominated:
+            pruned.append(candidate)
+    return pruned
+
+
+def best_asymmetric_points_by_setup_total(max_setup_total: int = SEARCH_CAPS[-1]) -> dict[int, AsymmetricSplitPoolPoint]:
+    candidates = round_candidates(max_poly=max_setup_total - 1)
+    best: dict[int, AsymmetricSplitPoolPoint] = {}
+    for round1 in candidates:
+        for round2 in candidates:
+            setup_total = round1.poly + round2.poly
+            if setup_total > max_setup_total:
+                continue
+            ops = 5 + round1.ops + round2.ops
+            bytes_ = PINNING_BYTES + round1.bytes70 + round2.bytes71
+            if ops > MAX_OPS or bytes_ > MAX_SCRIPT_BYTES:
+                continue
+            point = AsymmetricSplitPoolPoint(round1=round1, round2=round2, ops=ops, bytes=bytes_)
+            incumbent = best.get(setup_total)
+            if incumbent is None or (
+                point.collision_bits,
+                point.second_preimage_bits,
+                -point.bytes,
+                -point.witness_bytes,
+            ) > (
+                incumbent.collision_bits,
+                incumbent.second_preimage_bits,
+                -incumbent.bytes,
+                -incumbent.witness_bytes,
+            ):
+                best[setup_total] = point
+    return best
+
+
 def fmt_time(point_hashes: float) -> str:
     return (
         f"{days_at_rate(point_hashes, GHASH):.1f}d@1GH/s "
@@ -403,6 +611,7 @@ def render_corrected_full_polyglot() -> str:
         f"  signed_bits={same_n.signed_digest_bits:.2f}",
         f"  second_preimage_bits={same_n.second_preimage_bits:.2f}",
         f"  collision_bits={same_n.collision_bits:.2f}",
+        f"  witness_bytes={same_n.witness_bytes}",
         f"  setup_elements={same_n.setup_elements}",
         f"  setup_bits={same_n.setup_bits:.2f}",
         f"  setup_time={fmt_time(same_n.setup_hashes)}",
@@ -452,6 +661,7 @@ def render_split_pool_frontier() -> str:
                 f"  signed_bits={point.signed_digest_bits:.2f}",
                 f"  second_preimage_bits={point.second_preimage_bits:.2f}",
                 f"  collision_bits={point.collision_bits:.2f}",
+                f"  witness_bytes={point.witness_bytes}",
                 f"  setup_elements={point.setup_elements}",
                 f"  setup_bits={point.setup_bits:.2f}",
                 f"  setup_time={fmt_time(point.setup_hashes)}",
@@ -471,6 +681,7 @@ def render_split_pool_frontier() -> str:
                 f"  signed_bits={point.signed_digest_bits:.2f}",
                 f"  second_preimage_bits={point.second_preimage_bits:.2f}",
                 f"  collision_bits={point.collision_bits:.2f}",
+                f"  witness_bytes={point.witness_bytes}",
                 f"  setup_elements={point.setup_elements}",
                 f"  setup_bits={point.setup_bits:.2f}",
                 f"  setup_time={fmt_time(point.setup_hashes)}",
@@ -489,6 +700,110 @@ def render_split_pool_frontier() -> str:
                 f"cap={cap}: m={point.poly_per_round} q={point.bonus_pool_per_round} "
                 f"s={point.signed_per_round} b={point.bonus_per_round} "
                 f"bytes={point.bytes} ops={point.ops} "
+                f"witness_bytes={point.witness_bytes} "
+                f"signed_bits={point.signed_digest_bits:.2f} "
+                f"second_preimage_bits={point.second_preimage_bits:.2f} "
+                f"collision_bits={point.collision_bits:.2f} "
+                f"setup_bits={point.setup_bits:.2f}"
+            )
+        )
+    return "\n".join(lines)
+
+
+def render_asymmetric_split_pool_frontier() -> str:
+    refs = {ref.name: ref for ref in corrected_references()}
+    config_a = refs["configA_8p1b_7p2b"]
+    baseline = refs["baseline_8_8"]
+    best_by_total = best_asymmetric_points_by_setup_total()
+
+    first_beats_config_a = next(
+        (
+            (setup_total, point)
+            for setup_total, point in sorted(best_by_total.items())
+            if point.second_preimage_bits > config_a.second_preimage_bits
+            and point.collision_bits > config_a.collision_bits
+        ),
+        None,
+    )
+    first_beats_baseline_collision = next(
+        (
+            (setup_total, point)
+            for setup_total, point in sorted(best_by_total.items())
+            if point.collision_bits > baseline.collision_bits
+        ),
+        None,
+    )
+
+    lines = [
+        "# asymmetric-split-pool-frontier",
+        "",
+    ]
+
+    if first_beats_config_a is not None:
+        setup_total, point = first_beats_config_a
+        lines.extend(
+            [
+                "first_point_beating_configA_on_second_preimage_and_collision:",
+                f"  setup_total={setup_total}",
+                (
+                    f"  r1: m={point.round1.poly} q={point.round1.bonus_pool} "
+                    f"s={point.round1.signed} b={point.round1.bonus}"
+                ),
+                (
+                    f"  r2: m={point.round2.poly} q={point.round2.bonus_pool} "
+                    f"s={point.round2.signed} b={point.round2.bonus}"
+                ),
+                f"  bytes={point.bytes}",
+                f"  ops={point.ops}",
+                f"  witness_bytes={point.witness_bytes}",
+                f"  signed_bits={point.signed_digest_bits:.2f}",
+                f"  second_preimage_bits={point.second_preimage_bits:.2f}",
+                f"  collision_bits={point.collision_bits:.2f}",
+                f"  setup_bits={point.setup_bits:.2f}",
+                f"  setup_time={fmt_time(point.setup_hashes)}",
+                "",
+            ]
+        )
+
+    if first_beats_baseline_collision is not None:
+        setup_total, point = first_beats_baseline_collision
+        lines.extend(
+            [
+                "first_point_beating_baseline_collision:",
+                f"  setup_total={setup_total}",
+                (
+                    f"  r1: m={point.round1.poly} q={point.round1.bonus_pool} "
+                    f"s={point.round1.signed} b={point.round1.bonus}"
+                ),
+                (
+                    f"  r2: m={point.round2.poly} q={point.round2.bonus_pool} "
+                    f"s={point.round2.signed} b={point.round2.bonus}"
+                ),
+                f"  bytes={point.bytes}",
+                f"  ops={point.ops}",
+                f"  witness_bytes={point.witness_bytes}",
+                f"  signed_bits={point.signed_digest_bits:.2f}",
+                f"  second_preimage_bits={point.second_preimage_bits:.2f}",
+                f"  collision_bits={point.collision_bits:.2f}",
+                f"  setup_bits={point.setup_bits:.2f}",
+                f"  setup_time={fmt_time(point.setup_hashes)}",
+                "",
+            ]
+        )
+
+    lines.append("best_asymmetric_points_by_setup_cap:")
+    for cap in SEARCH_CAPS:
+        point = best_by_total.get(cap)
+        if point is None:
+            lines.append(f"  cap={cap}: none")
+            continue
+        lines.append(
+            "  "
+            + (
+                f"cap={cap}: "
+                f"r1(m={point.round1.poly},q={point.round1.bonus_pool},s={point.round1.signed},b={point.round1.bonus}) "
+                f"r2(m={point.round2.poly},q={point.round2.bonus_pool},s={point.round2.signed},b={point.round2.bonus}) "
+                f"bytes={point.bytes} ops={point.ops} witness_bytes={point.witness_bytes} "
                 f"signed_bits={point.signed_digest_bits:.2f} "
                 f"second_preimage_bits={point.second_preimage_bits:.2f} "
                 f"collision_bits={point.collision_bits:.2f} "
@@ -504,6 +819,8 @@ def main() -> None:
     print(render_corrected_full_polyglot())
     print()
     print(render_split_pool_frontier())
+    print()
+    print(render_asymmetric_split_pool_frontier())
 
 
 if __name__ == "__main__":
