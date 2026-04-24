@@ -52,15 +52,15 @@ If the optimizer fails to find such a candidate after a serious search, that is 
 
 ## Current result
 
-The current strongest result is in [`docs/results/2026-04-24-frontier-9.md`](./docs/results/2026-04-24-frontier-9.md).
+The current strongest result is in [`docs/results/2026-04-24-frontier-10.md`](./docs/results/2026-04-24-frontier-10.md).
 
 In short:
 
-- cascade is not the full story; some expressive toy orders are conflict-only and still beat the subset baseline
-- in the exhaustively searched toy universes, every expressive order had a destructive-conflict witness
-- overlap-bearing exact-`13` DER families showed no destructive-conflict witness either
+- wider exhaustive search still found `0` conflict-free expressive orders, including a mixed ternary universe with `1,974,024` ordered families
+- the explicit overlap-bearing exact-`13` DER pool still sits exactly on the subset baseline for ordered `2`-of-`4` and ordered `3`-of-`5`
+- all searched evidence now supports a sharper working conjecture: conflict-free families collapse back to subset behavior
 
-That shifts the repo from "look for overlap-bearing DER" toward "look for valid blob families with real conflict structure, or stop optimizing `FindAndDelete` overlap at all."
+That shifts the repo again: the next serious target is not “more overlap,” but “valid selectable blob families with explicit destructive conflict structure,” or else a different verification surface entirely.
 
 ## Is this post-quantum safe?
 
@@ -94,11 +94,13 @@ checkcheck/
       2026-04-24-frontier-7.md
       2026-04-24-frontier-8.md
       2026-04-24-frontier-9.md
+      2026-04-24-frontier-10.md
   specs/
     compiler.md
   third_party/
     README.md
   tools/
+    fad_conflict_collapse_frontier.py
     fad_cascade_frontier.py
     fad_mechanism_frontier.py
     der_higher_order_frontier.py
