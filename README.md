@@ -52,17 +52,17 @@ If the optimizer fails to find such a candidate after a serious search, that is 
 
 ## Current result
 
-The current strongest result is in [`docs/results/2026-04-24-frontier-2.md`](./docs/results/2026-04-24-frontier-2.md).
+The current strongest result is in [`docs/results/2026-04-24-frontier-3.md`](./docs/results/2026-04-24-frontier-3.md).
 
 In short:
 
 - the public QSB baseline `150,8,8` is already the exact signed-digest optimum inside the current HORS-like family
 - the public Config A point is already the exact best search-space tradeoff once you require about `80` signed bits
 - grouped-choice is structurally dominated
-- ordered witness permutations collapse to the same searched scriptCode, so they do not buy real entropy
-- tree-style modern constructions remain blocked by current Bitcoin Script expressivity
+- ordered witness permutations collapse to the same searched scriptCode on the actual QSB 9-byte dummy-signature surface
+- but overlap-coded `FindAndDelete` is real in toy constructions, which means the next frontier is likely an engineered overlap surface rather than another obvious family tweak
 
-That means the next frontier is no longer "tune the obvious families harder." It has to come from a genuinely different verification surface or a way to compress many logical choices into one checked opening.
+That shifts the repo from "compare known families" toward "search for selectable token families that make `FindAndDelete` itself more expressive without blowing the byte budget."
 
 ## Is this post-quantum safe?
 
@@ -94,6 +94,7 @@ checkcheck/
   third_party/
     README.md
   tools/
+    fad_overlap_search.py
     frontier_model.py
 ```
 
