@@ -52,23 +52,25 @@ If the optimizer fails to find such a candidate after a serious search, that is 
 
 ## Current result
 
-The current strongest result is in [`docs/results/2026-04-24-frontier-16.md`](./docs/results/2026-04-24-frontier-16.md).
+The current decision gate is in [`docs/results/2026-04-24-frontier-17.md`](./docs/results/2026-04-24-frontier-17.md).
 
 In short:
 
-- `frontier-15` showed that polyglot remains real after corrected accounting, but setup cost dominates
-- `frontier-16` shows the best surviving partial-polyglot family is **asymmetric**, not symmetric
-- once the two digest rounds are allowed to differ, the first Config-A-beating threshold drops from `192` trusted polyglot elements to `143`
-- the first baseline-collision crossing drops from `224` to `200`
-- witness size stays roughly flat in the interesting region, so the blocker is still trusted setup rather than witness blowup
+- `frontier-16` showed that the best numeric partial-polyglot family is **asymmetric**, not symmetric
+- the first Config-A-beating model point drops from `192` trusted polyglot elements to `143`
+- the first baseline-collision model crossing drops from `224` to `200`
+- `frontier-17` adds a stack-feasibility gate and returns **NO-GO** for further economics tuning
+- the current asymmetric result is still a budget frontier, not yet an executable script construction
 
-That shifts the repo again:
+That shifts the repo:
 
-from “polyglot is the only positive branch”
+from
+
+"keep tuning the asymmetric polyglot curve"
 
 to
 
-“the only positive branch still standing is an asymmetric partial-polyglot family, and the next work is making that family script-faithful while pushing the setup threshold lower.”
+"build or import a stack-correct, regtest-proven QSB/polyglot round first."
 
 ## Is this post-quantum safe?
 
