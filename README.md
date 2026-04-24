@@ -50,16 +50,37 @@ The MVP is successful if it finds a consensus-compatible candidate that improves
 
 If the optimizer fails to find such a candidate after a serious search, that is still a useful result. It would suggest the current QSB design is already near the efficient frontier under today’s Bitcoin constraints.
 
-## First result
+## Current result
 
-The first useful result from this repo is already directional:
+The current decision gate is in [`docs/results/2026-04-24-frontier-22.md`](./docs/results/2026-04-24-frontier-22.md).
 
-- Directly porting modern hash-based signature systems such as SLH-DSA / SPHINCS-style FORS trees into Bitcoin Script is unlikely to beat the current HORS-like QSB baseline.
-- The likely bottleneck is not the hash primitive itself. Bitcoin Script does not expose SHAKE, KangarooTwelve, or BLAKE3.
-- The likely bottleneck is verification geometry: bytes per revealed opening, non-push opcodes per checked opening, and whether the construction can be tuned tightly to the `~2^46` hash-to-signature puzzle target.
-- That makes grouped-choice / limited-use codebook constructions more promising than naive Merkle-authentication-path designs.
+In short:
 
-Details are in [`docs/results/2026-04-24-frontier-0.md`](./docs/results/2026-04-24-frontier-0.md).
+- `frontier-16` showed that the best numeric partial-polyglot family is **asymmetric**, not symmetric
+- the first Config-A-beating model point drops from `192` trusted polyglot elements to `143`
+- the first baseline-collision model crossing drops from `224` to `200`
+- `frontier-17` adds a stack-feasibility gate and returns **NO-GO** for further economics tuning
+- `frontier-18` adds a conservative stack-correct polyglot round skeleton and shows that version is too expensive
+- `frontier-19` finds a cheaper `OP_ROLL + OP_DUP` selection gadget that avoids `OP_PICK + OP_ROLL`
+- the old `143` trusted-element result survives under emitted stack-correct accounting before sigop correction
+- the first pre-sigop-correction stack-correct baseline-collision crossing appears at `198` trusted elements, with the stronger practical point at `224`
+- `frontier-20` validates pinning + round 1 + round 2 as one symbolic script and shows those pre-sigop-correction points fit the byte/non-push envelope
+- `frontier-20` also makes the honest limitation explicit: the construction leaves stack residue, so it is a non-standard / miner-direct path, not a cleanstack standard-relay claim
+- `frontier-21` runs an external `python-bitcoinlib` interpreter gate and finds a real accounting bug: `OP_CHECKMULTISIG` must be charged by key count
+- after sigop-corrected accounting, the first Config-A crossing moves to `181`, the first baseline-collision crossing moves to `258`, and the old `224` point no longer fits
+- the corrected `258` point passes byte-level interpreter validation with signature checks stubbed and cleanstack disabled
+- `frontier-22` prices the trusted setup honestly: the corrected `258` point needs about `2^54.41` HASH160 trials for structural DER hits, or roughly `2^55.41` with recoverable-`r` filtering
+- local full cryptographic validation is **NO-GO**; the branch only continues if we are willing to run GPU/distributed setup
+
+That shifts the repo:
+
+from
+
+"keep tuning the asymmetric polyglot curve"
+
+to
+
+"either fund/export a GPU trusted setup for `configA_sigop_corrected_181`, or stop and write this up as a conditional result."
 
 ## Is this post-quantum safe?
 
@@ -79,16 +100,55 @@ So the honest framing is:
 ```text
 checkcheck/
   README.md
+  requirements-interpreter.txt
   docs/
     background-hash-functions.md
     mvp.md
     results/
       2026-04-24-frontier-0.md
+      2026-04-24-frontier-1.md
+      2026-04-24-frontier-2.md
+      2026-04-24-frontier-3.md
+      2026-04-24-frontier-4.md
+      2026-04-24-frontier-5.md
+      2026-04-24-frontier-6.md
+      2026-04-24-frontier-7.md
+      2026-04-24-frontier-8.md
+      2026-04-24-frontier-9.md
+      2026-04-24-frontier-10.md
+      2026-04-24-frontier-11.md
+      2026-04-24-frontier-12.md
+      2026-04-24-frontier-13.md
+      2026-04-24-frontier-14.md
+      2026-04-24-frontier-15.md
+      2026-04-24-frontier-16.md
+      2026-04-24-frontier-17.md
+      2026-04-24-frontier-18.md
+      2026-04-24-frontier-19.md
+      2026-04-24-frontier-20.md
+      2026-04-24-frontier-21.md
+      2026-04-24-frontier-22.md
   specs/
     compiler.md
   third_party/
     README.md
   tools/
+    stack_correct_polyglot_frontier.py
+    qsb_stack_sanity.py
+    polyglot_setup_frontier.py
+    polyglot_frontier.py
+    polyglot_interpreter_gate.py
+    polyglot_trusted_setup_probe.py
+    der_triple_anchor_frontier.py
+    der_double_anchor_frontier.py
+    der_conflict_lift_frontier.py
+    fad_conflict_collapse_frontier.py
+    fad_cascade_frontier.py
+    fad_mechanism_frontier.py
+    der_higher_order_frontier.py
+    der_overlap_threshold_frontier.py
+    der_surface_frontier.py
+    fad_overlap_search.py
     frontier_model.py
 ```
 
